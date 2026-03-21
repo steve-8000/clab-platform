@@ -2,12 +2,24 @@
   "name": "@clab/events",
   "version": "2.0.0",
   "type": "module",
-  "exports": { ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" } },
-  "scripts": { "build": "tsc", "typecheck": "tsc --noEmit", "clean": "rm -rf dist" },
-  "dependencies": {
-    "nats": "^2.29",
-    "zod": "^3.24",
-    "@clab/domain": "workspace:*"
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
-  "devDependencies": { "typescript": "^5.7" }
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@clab/domain": "workspace:*",
+    "nats": "^2.29",
+    "zod": "^3.24"
+  },
+  "devDependencies": {
+    "@types/node": "22",
+    "typescript": "^5.7"
+  }
 }

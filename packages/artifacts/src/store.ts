@@ -15,7 +15,7 @@ export class LocalArtifactStore implements ArtifactStore {
     const path = await import("node:path");
     const dir = path.join(this.basePath, manifest.missionId);
     await fs.mkdir(dir, { recursive: true });
-    const filePath = path.join(dir, `${manifest.id}-${manifest.type.toLowerCase()}`);
+    const filePath = path.join(dir, `${manifest.id}-${(manifest.type as string).toLowerCase()}`);
     await fs.writeFile(filePath, content);
     await fs.writeFile(`${filePath}.manifest.json`, JSON.stringify(manifest, null, 2));
     return filePath;

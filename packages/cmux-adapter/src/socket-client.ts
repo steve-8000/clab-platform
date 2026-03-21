@@ -38,7 +38,7 @@ export class CmuxSocketClient implements CmuxAdapter {
         this.processBuffer();
       });
 
-      this.socket.on("error", (err) => {
+      this.socket.on("error", (err: unknown) => {
         reject(err);
         for (const [, pending] of this.pending) {
           pending.reject(err);
@@ -103,7 +103,7 @@ export class CmuxSocketClient implements CmuxAdapter {
 
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.socket!.write(JSON.stringify(request) + "\n", (err) => {
+      this.socket!.write(JSON.stringify(request) + "\n", (err: unknown) => {
         if (err) {
           this.pending.delete(id);
           reject(err);

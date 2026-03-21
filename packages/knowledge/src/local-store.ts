@@ -27,7 +27,7 @@ export class LocalKnowledgeStore implements KnowledgeStore {
   private async allEntries(): Promise<KnowledgeEntry[]> {
     await this.ensureDir();
     const files = await readdir(this.dir);
-    const jsonFiles = files.filter((f) => f.endsWith(".json"));
+    const jsonFiles = files.filter((f: string) => f.endsWith(".json"));
     const entries: KnowledgeEntry[] = [];
     for (const file of jsonFiles) {
       try {

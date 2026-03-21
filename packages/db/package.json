@@ -2,7 +2,12 @@
   "name": "@clab/db",
   "version": "2.0.0",
   "type": "module",
-  "exports": { ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" } },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
@@ -13,11 +18,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@clab/domain": "workspace:*",
     "drizzle-orm": "^0.38",
-    "postgres": "^3.4",
-    "@clab/domain": "workspace:*"
+    "postgres": "^3.4"
   },
   "devDependencies": {
+    "@types/node": "22",
     "drizzle-kit": "^0.30",
     "typescript": "^5.7"
   }

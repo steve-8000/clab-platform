@@ -16,5 +16,8 @@
     "db:migrate": "pnpm --filter @clab/db migrate",
     "db:push": "pnpm --filter @clab/db push",
     "clean": "turbo clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^2.8.20"
   }
 }

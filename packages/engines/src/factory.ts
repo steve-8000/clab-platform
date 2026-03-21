@@ -13,5 +13,7 @@ export function createRunner(engine: Engine, cmux: CmuxAdapter): EngineRunner {
       return new ClaudeRunner(cmux);
     case "BROWSER":
       return new BrowserRunner(cmux);
+    default:
+      throw new Error(`Unknown engine: ${engine}`);
   }
 }

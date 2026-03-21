@@ -5,7 +5,7 @@ import {
   integer,
   boolean,
   jsonb,
-  timestamptz,
+  timestamp,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -16,8 +16,8 @@ export const workspaces = pgTable("workspaces", {
   name: text("name").notNull(),
   rootPath: text("root_path").notNull(),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-  updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── Missions ─────────────────────────────────────────────────────────────────
@@ -34,9 +34,9 @@ export const missions = pgTable("missions", {
   assumptions: jsonb("assumptions").$type<string[]>().default([]),
   constraints: jsonb("constraints").$type<string[]>().default([]),
   acceptanceCriteria: jsonb("acceptance_criteria").$type<string[]>().default([]),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-  updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-  completedAt: timestamptz("completed_at"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
 // ─── Plans ────────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ export const plans = pgTable("plans", {
   summary: text("summary").notNull(),
   waveCount: integer("wave_count").notNull().default(0),
   isActive: boolean("is_active").notNull().default(true),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── Waves ────────────────────────────────────────────────────────────────────
@@ -67,9 +67,9 @@ export const waves = pgTable("waves", {
   label: text("label"),
   status: text("status").notNull().default("PENDING"),
   directive: text("directive"),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-  startedAt: timestamptz("started_at"),
-  completedAt: timestamptz("completed_at"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
 // ─── Tasks ────────────────────────────────────────────────────────────────────
@@ -91,9 +91,9 @@ export const tasks = pgTable("tasks", {
   acceptanceCriteria: jsonb("acceptance_criteria").$type<string[]>().default([]),
   maxRetries: integer("max_retries").notNull().default(2),
   timeoutMs: integer("timeout_ms").notNull().default(300_000),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-  updatedAt: timestamptz("updated_at").notNull().defaultNow(),
-  completedAt: timestamptz("completed_at"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
 // ─── Task Runs ────────────────────────────────────────────────────────────────
@@ -112,8 +112,8 @@ export const taskRuns = pgTable("task_runs", {
   stdout: text("stdout"),
   stderr: text("stderr"),
   durationMs: integer("duration_ms"),
-  startedAt: timestamptz("started_at").notNull().defaultNow(),
-  finishedAt: timestamptz("finished_at"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
 
 // ─── Agent Sessions ───────────────────────────────────────────────────────────
@@ -128,10 +128,10 @@ export const agentSessions = pgTable("agent_sessions", {
   state: text("state").notNull().default("IDLE"),
   paneId: text("pane_id"),
   pid: integer("pid"),
-  lastHeartbeat: timestamptz("last_heartbeat"),
+  lastHeartbeat: timestamp("last_heartbeat", { withTimezone: true }),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
-  closedAt: timestamptz("closed_at"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
 });
 
 // ─── Artifacts ────────────────────────────────────────────────────────────────
@@ -150,7 +150,7 @@ export const artifacts = pgTable("artifacts", {
   sizeBytes: integer("size_bytes"),
   checksum: text("checksum"),
   metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── Decisions ────────────────────────────────────────────────────────────────
@@ -169,7 +169,7 @@ export const decisions = pgTable("decisions", {
   riskLevel: text("risk_level").notNull().default("LOW"),
   actorKind: text("actor_kind").notNull(),
   actorId: text("actor_id").notNull(),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── Approvals ────────────────────────────────────────────────────────────────
@@ -187,8 +187,8 @@ export const approvals = pgTable("approvals", {
   actorKind: text("actor_kind").notNull(),
   actorId: text("actor_id").notNull(),
   reviewedBy: text("reviewed_by"),
-  reviewedAt: timestamptz("reviewed_at"),
-  createdAt: timestamptz("created_at").notNull().defaultNow(),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── Capability Leases ────────────────────────────────────────────────────────
@@ -199,9 +199,9 @@ export const capabilityLeases = pgTable("capability_leases", {
     .notNull()
     .references(() => agentSessions.id, { onDelete: "cascade" }),
   capability: text("capability").notNull(),
-  grantedAt: timestamptz("granted_at").notNull().defaultNow(),
-  expiresAt: timestamptz("expires_at").notNull(),
-  revokedAt: timestamptz("revoked_at"),
+  grantedAt: timestamp("granted_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
 // ─── Events ───────────────────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ export const events = pgTable("events", {
   id: uuid("id").primaryKey().defaultRandom(),
   type: text("type").notNull(),
   version: integer("version").notNull().default(1),
-  occurredAt: timestamptz("occurred_at").notNull().defaultNow(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
   missionId: uuid("mission_id"),
   waveId: uuid("wave_id"),
   taskId: uuid("task_id"),

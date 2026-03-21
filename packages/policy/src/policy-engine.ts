@@ -1,4 +1,4 @@
-import type { Role, RiskLevel } from "@clab/domain";
+import type { Role, RiskLevel, Capability } from "@clab/domain";
 import { hasCapability, getCapabilities } from "./capabilities.js";
 import { checkApprovalRequired } from "./approval-gates.js";
 import { computeRiskScore } from "./risk-scoring.js";
@@ -73,7 +73,7 @@ export class PolicyEngine {
   private inferCapability(
     action: string,
     context: Record<string, unknown>,
-  ): string | undefined {
+  ): Capability | undefined {
     const lower = action.toLowerCase();
     const ctx = JSON.stringify(context).toLowerCase();
     const combined = `${lower} ${ctx}`;
