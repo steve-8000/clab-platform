@@ -10,6 +10,57 @@ const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pas
 const sql = postgres(DATABASE_URL);
 const db = drizzle(sql, { schema });
 
+// Standalone review logic — usable from both HTTP and NATS
+export async function reviewTask(taskId: string): Promise<{ passed: boolean; issues: string[]; artifactCount: number; missionId: string }> {
+  // 1. Get task
+  const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+  if (!task) throw new Error("Task not found");
+
+  // 2. Get task runs
+  const runs = await db.select().from(taskRuns).where(eq(taskRuns.taskId, taskId));
+  const latestRun = runs[runs.length - 1];
+
+  // 3. Get artifacts
+  const taskArtifacts = latestRun
+    ? await db.select().from(artifacts).where(eq(artifacts.taskRunId, latestRun.id))
+    : [];
+
+  // 4. Basic review checks
+  const issues: string[] = [];
+  if (!latestRun) issues.push("No task run found");
+  else if (latestRun.status !== "SUCCEEDED") issues.push(`Task run status: ${latestRun.status}`);
+  if (taskArtifacts.length === 0) issues.push("No artifacts produced");
+
+  const passed = issues.length === 0;
+
+  console.log(`[review] Task ${taskId}: ${passed ? "PASSED" : "FAILED"} (${issues.join(", ") || "ok"})`);
+
+  // 5. If passed, check if wave is complete
+  if (passed) {
+    const waveTasks = await db.select().from(tasks).where(eq(tasks.waveId, task.waveId));
+    const allDone = waveTasks.every(t => t.status === "SUCCEEDED" || t.id === taskId);
+
+    if (allDone) {
+      await db.update(waves).set({ status: "COMPLETED", completedAt: new Date() }).where(eq(waves.id, task.waveId));
+      console.log(`[review] Wave ${task.waveId} completed`);
+
+      const missionWaves = await db.select().from(waves).where(eq(waves.missionId, task.missionId));
+      const allWavesDone = missionWaves.every(w => w.status === "COMPLETED" || w.id === task.waveId);
+
+      if (allWavesDone) {
+        await db.update(missions).set({
+          status: "COMPLETED",
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(missions.id, task.missionId));
+        console.log(`[review] Mission ${task.missionId} completed!`);
+      }
+    }
+  }
+
+  return { passed, issues, artifactCount: taskArtifacts.length, missionId: task.missionId };
+}
+
 export const app = new Hono()
   .use("*", cors())
   .get("/health", (c) => c.json({ status: "ok", service: "review-service" }))
@@ -21,63 +72,14 @@ export const app = new Hono()
 
     if (!taskId) return c.json({ error: "taskId required" }, 400);
 
-    // 1. Get task
-    const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
-    if (!task) return c.json({ error: "Task not found" }, 404);
-
-    // 2. Get task runs
-    const runs = await db.select().from(taskRuns).where(eq(taskRuns.taskId, taskId));
-    const latestRun = runs[runs.length - 1];
-
-    // 3. Get artifacts
-    const taskArtifacts = latestRun
-      ? await db.select().from(artifacts).where(eq(artifacts.taskRunId, latestRun.id))
-      : [];
-
-    // 4. Basic review checks
-    const issues: string[] = [];
-    if (!latestRun) issues.push("No task run found");
-    else if (latestRun.status !== "SUCCEEDED") issues.push(`Task run status: ${latestRun.status}`);
-    if (taskArtifacts.length === 0) issues.push("No artifacts produced");
-
-    const passed = issues.length === 0;
-
-    console.log(`[review] Task ${taskId}: ${passed ? "PASSED" : "FAILED"} (${issues.join(", ") || "ok"})`);
-
-    // 5. If passed, check if wave is complete
-    if (passed) {
-      // Check all tasks in this wave
-      const waveTasks = await db.select().from(tasks).where(eq(tasks.waveId, task.waveId));
-      const allDone = waveTasks.every(t => t.status === "SUCCEEDED" || t.id === taskId);
-
-      if (allDone) {
-        // Mark wave complete
-        await db.update(waves).set({ status: "COMPLETED", completedAt: new Date() }).where(eq(waves.id, task.waveId));
-        console.log(`[review] Wave ${task.waveId} completed`);
-
-        // Check if all waves for mission are complete
-        const missionWaves = await db.select().from(waves).where(eq(waves.missionId, task.missionId));
-        const allWavesDone = missionWaves.every(w => w.status === "COMPLETED" || w.id === task.waveId);
-
-        if (allWavesDone) {
-          // Mark mission complete
-          await db.update(missions).set({
-            status: "COMPLETED",
-            completedAt: new Date(),
-            updatedAt: new Date(),
-          }).where(eq(missions.id, task.missionId));
-          console.log(`[review] Mission ${task.missionId} completed!`);
-        }
-      }
+    try {
+      const result = await reviewTask(taskId);
+      return c.json({ taskId, ...result });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message === "Task not found") return c.json({ error: "Task not found" }, 404);
+      throw err;
     }
-
-    return c.json({
-      taskId,
-      passed,
-      issues,
-      artifactCount: taskArtifacts.length,
-      missionId: task.missionId,
-    });
   })
 
   // GET /status/:missionId — Get review status for a mission

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { db, logger } from "../deps.js";
+import { db, logger, publishEvent } from "../deps.js";
 import { missions, plans, waves, tasks } from "@clab/db";
 import { eq } from "drizzle-orm";
 
@@ -82,6 +82,19 @@ missionRoutes.post("/:id/start", async (c) => {
   for (const task of missionTasks) {
     await db.update(tasks).set({ status: "ASSIGNED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
   }
+
+    // Emit events for each assigned task
+    for (const task of missionTasks) {
+      await publishEvent("clab.task.assigned", {
+        taskId: task.id,
+        missionId: id,
+        waveId: task.waveId,
+        role: task.role,
+        engine: task.engine,
+        title: task.title,
+        description: task.description,
+      });
+    }
 
   logger.info("Mission started", { missionId: id, tasks: missionTasks.length });
 

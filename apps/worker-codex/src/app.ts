@@ -10,6 +10,48 @@ const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pas
 const sql = postgres(DATABASE_URL);
 const db = drizzle(sql, { schema });
 
+export async function executeTask(taskId: string): Promise<void> {
+  const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+  if (!task) { console.error(`Task ${taskId} not found`); return; }
+
+  // Create task run
+  const [run] = await db.insert(taskRuns).values({
+    taskId: task.id,
+    attempt: 1,
+    status: "RUNNING",
+  }).returning();
+
+  // Update task to RUNNING
+  await db.update(tasks).set({ status: "RUNNING", updatedAt: new Date() }).where(eq(tasks.id, taskId));
+
+  console.log(`[worker-codex] Executing: ${task.title}`);
+
+  // Simulate execution (will be replaced with real Claude/Codex API later)
+  const output = `Task "${task.title}" executed by worker-codex.\nDescription: ${task.description}\nRole: ${task.role}`;
+
+  // Update run to SUCCEEDED
+  await db.update(taskRuns).set({
+    status: "SUCCEEDED",
+    stdout: output,
+    durationMs: 1500,
+    finishedAt: new Date(),
+  }).where(eq(taskRuns.id, run.id));
+
+  // Create artifact
+  await db.insert(artifacts).values({
+    taskRunId: run.id,
+    missionId: task.missionId,
+    type: "SUMMARY",
+    content: `Completed: ${task.title}`,
+    metadata: { role: task.role, engine: task.engine },
+  });
+
+  // Update task to SUCCEEDED
+  await db.update(tasks).set({ status: "SUCCEEDED", completedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, taskId));
+
+  console.log(`[worker-codex] Task ${taskId} completed`);
+}
+
 export const app = new Hono()
   .use("*", cors())
   .get("/health", (c) => c.json({ status: "ok", service: "worker-codex" }))
@@ -21,53 +63,10 @@ export const app = new Hono()
 
     if (!taskId) return c.json({ error: "taskId required" }, 400);
 
-    // 1. Get the task
     const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     if (!task) return c.json({ error: "Task not found" }, 404);
 
-    // 2. Create task run
-    const [run] = await db.insert(taskRuns).values({
-      taskId: task.id,
-      attempt: 1,
-      status: "RUNNING",
-    }).returning();
+    await executeTask(taskId);
 
-    // 3. Update task status to RUNNING
-    await db.update(tasks).set({ status: "RUNNING", updatedAt: new Date() }).where(eq(tasks.id, taskId));
-
-    console.log(`[worker-codex] Executing task ${taskId}: ${task.title}`);
-
-    // 4. Simulate execution (in real impl, this would run codex)
-    const executionResult = {
-      summary: `Completed: ${task.title}`,
-      output: `Task "${task.title}" executed successfully by worker-codex.\nDescription: ${task.description}\nRole: ${task.role}`,
-    };
-
-    // 5. Update task run to SUCCEEDED
-    const durationMs = 1500; // simulated
-    await db.update(taskRuns).set({
-      status: "SUCCEEDED",
-      stdout: executionResult.output,
-      durationMs,
-      finishedAt: new Date(),
-    }).where(eq(taskRuns.id, run.id));
-
-    // 6. Create artifact
-    const [artifact] = await db.insert(artifacts).values({
-      taskRunId: run.id,
-      missionId: task.missionId,
-      type: "SUMMARY",
-      content: executionResult.summary,
-      metadata: { role: task.role, engine: task.engine },
-    }).returning();
-
-    // 7. Update task to SUCCEEDED
-    await db.update(tasks).set({ status: "SUCCEEDED", completedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, taskId));
-
-    console.log(`[worker-codex] Task ${taskId} completed, artifact ${artifact.id} created`);
-
-    return c.json({
-      taskRun: { ...run, status: "SUCCEEDED", durationMs },
-      artifact,
-    });
+    return c.json({ status: "SUCCEEDED", taskId });
   });
