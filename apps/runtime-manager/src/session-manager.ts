@@ -1,6 +1,6 @@
 import { db } from "./app.js";
 import * as schema from "@clab/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { EventBus, createEvent } from "@clab/events";
 import type { EventEnvelope } from "@clab/events";
 import {
@@ -54,22 +54,40 @@ async function provisionSession(event: EventEnvelope): Promise<void> {
   const taskId = event.taskId ?? (payload.taskId as string);
   const role = payload.role as string ?? payload.assignedTo as string;
   const engine = payload.engine as string ?? "CODEX";
+  const workspaceId = event.workspaceId ?? WORKSPACE_ID;
+  const stickyKey = `${workspaceId}:${role}:${engine}`;
 
-  // Check for existing idle session with same role
+  // Reuse a sticky session for the same workspace/role/engine.
   const existing = await db.select().from(agentSessions)
-    .where(eq(agentSessions.role, role));
-  const idleSession = existing.find(s => s.state === "IDLE");
+    .where(and(
+      eq(agentSessions.workspaceId, workspaceId),
+      eq(agentSessions.role, role),
+      eq(agentSessions.engine, engine),
+    ));
+  const stickySession = existing.find((session) => {
+    const meta = session.metadata as Record<string, unknown> | null;
+    return meta?.currentTaskId === taskId && (session.state === "BOUND" || session.state === "RUNNING");
+  });
+  const idleSession = existing.find((session) => session.state === "IDLE");
 
   let sessionId: string;
 
-  if (idleSession) {
+  if (stickySession) {
+    sessionId = stickySession.id;
+    console.log(`[runtime-manager] Reusing sticky session ${sessionId} for duplicate assignment (${stickyKey})`);
+  } else if (idleSession) {
     // Reuse existing session: IDLE → BOUND → RUNNING
     sessionId = idleSession.id;
     assertTransition(SESSION_TRANSITIONS, "IDLE", "BOUND");
     await db.update(agentSessions).set({
       state: "BOUND",
       lastHeartbeat: new Date(),
-      metadata: { ...(idleSession.metadata as Record<string, unknown> || {}), taskId },
+      metadata: {
+        ...(idleSession.metadata as Record<string, unknown> || {}),
+        stickyKey,
+        currentTaskId: taskId,
+        lastTaskId: taskId,
+      },
     }).where(eq(agentSessions.id, sessionId));
 
     assertTransition(SESSION_TRANSITIONS, "BOUND", "RUNNING");
@@ -87,7 +105,11 @@ async function provisionSession(event: EventEnvelope): Promise<void> {
       engine,
       state: "IDLE",
       lastHeartbeat: new Date(),
-      metadata: { taskId },
+      metadata: {
+        stickyKey,
+        currentTaskId: taskId,
+        lastTaskId: taskId,
+      },
     }).returning();
     sessionId = session.id;
 
@@ -121,7 +143,7 @@ async function provisionSession(event: EventEnvelope): Promise<void> {
   }, {
     sessionId,
     taskId,
-    workspaceId: event.workspaceId ?? WORKSPACE_ID,
+    workspaceId,
     actor: { kind: "system", id: "runtime-manager" },
   }));
 }
@@ -147,16 +169,22 @@ async function handleTaskCompleted(event: EventEnvelope): Promise<void> {
   const sessions = await db.select().from(agentSessions);
   const session = sessions.find(s => {
     const meta = s.metadata as Record<string, unknown> | null;
-    return meta?.taskId === taskId && s.state === "RUNNING";
+    return (meta?.currentTaskId === taskId || meta?.taskId === taskId) && s.state === "RUNNING";
   });
 
   if (session) {
     // RUNNING → IDLE (ready for reuse)
     if (canTransition(SESSION_TRANSITIONS, session.state as "RUNNING", "IDLE")) {
       assertTransition(SESSION_TRANSITIONS, session.state as "RUNNING", "IDLE");
+      const metadata = session.metadata as Record<string, unknown> | null;
       await db.update(agentSessions).set({
         state: "IDLE",
         lastHeartbeat: new Date(),
+        metadata: {
+          ...(metadata || {}),
+          currentTaskId: null,
+          lastTaskId: taskId,
+        },
       }).where(eq(agentSessions.id, session.id));
       console.log(`[runtime-manager] Session ${session.id} RUNNING→IDLE (task ${taskId} done)`);
 

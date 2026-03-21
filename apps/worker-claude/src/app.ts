@@ -5,8 +5,11 @@ import postgres from "postgres";
 import * as schema from "@clab/db";
 import { eq } from "drizzle-orm";
 import { EventBus, createEvent } from "@clab/events";
+import { CmuxSocketClient } from "@clab/cmux-adapter";
+import { createRunner } from "@clab/engines";
+import { getPrompt, renderPrompt } from "@clab/prompts";
 
-const { tasks, taskRuns, artifacts } = schema;
+const { tasks, taskRuns, artifacts, agentSessions } = schema;
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pass@postgres:5432/clab";
 const sql = postgres(DATABASE_URL);
 const db = drizzle(sql, { schema });
@@ -38,12 +41,135 @@ async function reportHeartbeat(sessionId: string): Promise<void> {
 }
 
 async function findSessionForTask(taskId: string): Promise<string | undefined> {
-  const sessions = await db.select().from(schema.agentSessions);
+  const sessions = await db.select().from(agentSessions);
   const session = sessions.find(s => {
     const meta = s.metadata as Record<string, unknown> | null;
-    return meta?.taskId === taskId && (s.state === "RUNNING" || s.state === "BOUND");
+    return (meta?.currentTaskId === taskId || meta?.taskId === taskId) && (s.state === "RUNNING" || s.state === "BOUND");
   });
   return session?.id;
+}
+
+function resolvePromptRole(role: string): string {
+  const map: Record<string, string> = {
+    REVIEWER: "OPERATIONS_REVIEWER",
+    OPERATIONS_REVIEWER: "OPERATIONS_REVIEWER",
+    PM: "PM",
+    RESEARCH_ANALYST: "RESEARCH_ANALYST",
+    STRATEGIST: "STRATEGIST",
+  };
+  return map[role] ?? "PM";
+}
+
+async function ensureSessionPane(sessionId: string, role: string): Promise<{ paneId: string; disconnect: () => void }> {
+  const cmux = new CmuxSocketClient();
+  await cmux.connect();
+
+  const [session] = await db.select().from(agentSessions).where(eq(agentSessions.id, sessionId));
+  if (!session) {
+    cmux.disconnect();
+    throw new Error(`Session ${sessionId} not found`);
+  }
+
+  if (session.paneId) {
+    return { paneId: session.paneId, disconnect: () => cmux.disconnect() };
+  }
+
+  let paneId: string | undefined;
+  const workspace = await cmux.workspaceCurrent();
+  const panes = await cmux.paneList(workspace.id);
+  const anchorPaneId = panes.find((pane) => pane.active)?.id ?? panes[0]?.id;
+  paneId = (await cmux.paneSplit("right", anchorPaneId)).id;
+
+  await db.update(agentSessions).set({
+    paneId,
+    metadata: {
+      ...(session.metadata as Record<string, unknown> || {}),
+      cmuxProvisionedAt: new Date().toISOString(),
+    },
+  }).where(eq(agentSessions.id, sessionId));
+
+  return { paneId, disconnect: () => cmux.disconnect() };
+}
+
+async function runTaskInCmux(task: typeof tasks.$inferSelect, sessionId: string): Promise<string> {
+  const { paneId, disconnect } = await ensureSessionPane(sessionId, task.role);
+
+  try {
+    const cmux = new CmuxSocketClient();
+    await cmux.connect();
+    const runner = createRunner("CLAUDE", cmux);
+    const prompt = getPrompt(resolvePromptRole(task.role));
+    const rendered = prompt
+      ? renderPrompt(prompt, {
+        instruction: task.description,
+        workingDir: process.env.WORKDIR_ROOT || process.cwd(),
+        context: "",
+        progress: "",
+        resources: "",
+        acceptanceCriteria: "",
+        standards: "",
+        scope: "",
+        knownInfo: "",
+        businessContext: "",
+        techLandscape: "",
+      })
+      : {
+        system: "You are working inside an interactive Claude TUI session.",
+        user: task.description,
+      };
+
+    await runner.start({
+      sessionId,
+      paneId,
+      workingDir: process.env.WORKDIR_ROOT || process.cwd(),
+      instruction: rendered.user,
+      systemPrompt: rendered.system,
+    });
+
+    const startedAt = Date.now();
+    const knownNotificationIds = new Set((await cmux.notificationList()).map((n) => n.id));
+    let stableIdleReads = 0;
+    let lastOutput = "";
+
+    while (Date.now() - startedAt < (task.timeoutMs ?? 300_000)) {
+      const output = await runner.readOutput(paneId);
+      const notifications = (await cmux.notificationList()) as Array<{
+        id: string;
+        title?: string;
+        subtitle?: string;
+        body?: string;
+        paneId?: string;
+      }>;
+      const paneNotification = notifications.find((notification) => {
+        if (knownNotificationIds.has(notification.id))
+          return false;
+
+        const text = `${notification.title ?? ""}\n${notification.subtitle ?? ""}\n${notification.body ?? ""}`.toLowerCase();
+        return notification.paneId === paneId || text.includes(paneId.toLowerCase());
+      });
+      if (paneNotification && runner.isIdle(output)) {
+        return output;
+      }
+
+      if (output === lastOutput && runner.isIdle(output)) {
+        stableIdleReads += 1;
+        if (stableIdleReads >= 3) {
+          return output;
+        }
+      } else {
+        stableIdleReads = 0;
+        lastOutput = output;
+      }
+      for (const notification of notifications) {
+        knownNotificationIds.add(notification.id);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+
+    return await runner.readOutput(paneId);
+  } finally {
+    disconnect();
+  }
 }
 
 export async function executeTask(taskId: string): Promise<void> {
@@ -72,16 +198,24 @@ export async function executeTask(taskId: string): Promise<void> {
 
   let output: string;
   const startTime = Date.now();
-  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+  const executionMode = process.env.EXECUTION_MODE || "k8s";
 
   try {
-    if (ANTHROPIC_API_KEY) {
+    if (executionMode === "local") {
+      if (!sessionId) throw new Error(`No bound session found for task ${taskId}`);
+      output = await runTaskInCmux(task, sessionId);
+      console.log(`[worker-claude] Executed in cmux TUI for (${task.role}): ${task.title}`);
+    } else {
+      const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+      if (!ANTHROPIC_API_KEY) {
+        throw new Error("ANTHROPIC_API_KEY is required when EXECUTION_MODE is not local");
+      }
+
       const systemPrompts: Record<string, string> = {
         REVIEWER: "You are a code reviewer. Analyze the given code or description for bugs, security issues, and quality. Provide a clear verdict: APPROVED or NEEDS_CHANGES with specific issues.",
         PM: "You are a project manager. Decompose the given objective into clear subtasks with priorities and dependencies. Be structured and concise.",
         RESEARCH_ANALYST: "You are a research analyst. Research the given topic, provide evidence-based findings, and give actionable recommendations.",
       };
-
       const systemPrompt = systemPrompts[task.role] || "You are an AI assistant. Complete the given task thoroughly.";
 
       console.log(`[worker-claude] Calling Claude API for (${task.role}): ${task.title}`);
@@ -107,25 +241,10 @@ export async function executeTask(taskId: string): Promise<void> {
         output = `[Claude API Error ${res.status}]: ${await res.text()}`;
         console.error(`[worker-claude] Claude API error: ${res.status}`);
       }
-    } else {
-      console.log(`[worker-claude] No ANTHROPIC_API_KEY — simulating`);
-      switch (task.role) {
-        case "REVIEWER":
-          output = `[SIMULATED Review] Reviewed: ${task.title}\n\nFindings:\n- Code follows established patterns\n- No security issues detected\n- Test coverage appears adequate\n\nVerdict: APPROVED`;
-          break;
-        case "PM":
-          output = `[SIMULATED PM Analysis] ${task.title}\n\nDecomposition:\n- Subtask 1: Setup and configuration\n- Subtask 2: Core implementation\n- Subtask 3: Testing and validation\n\nPriority: High\nEstimated effort: Medium`;
-          break;
-        case "RESEARCH_ANALYST":
-          output = `[SIMULATED Research] ${task.title}\n\nFindings:\n- Analyzed relevant documentation\n- Compared approaches\n- Recommendation: Use established pattern\n\nEvidence: Based on project conventions`;
-          break;
-        default:
-          output = `[SIMULATED Claude] Completed: ${task.title}\n\nAnalysis: ${task.description}`;
-      }
     }
   } catch (err) {
-    output = `[Claude API Error]: ${String(err)}`;
-    console.error(`[worker-claude] Claude API call failed:`, err);
+    output = `[worker-claude error]: ${String(err)}`;
+    console.error(`[worker-claude] Task execution failed:`, err);
   } finally {
     if (heartbeatInterval) clearInterval(heartbeatInterval);
   }

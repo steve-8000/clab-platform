@@ -20,10 +20,12 @@ User Request → Mission → Plan → Waves → Tasks → Agent Sessions → Art
 # 2. Clone & setup
 git clone https://github.com/steve-8000/clab-platform.git
 cd clab-platform
-./scripts/setup.sh    # installs deps, creates .env, registers clab plugin
+./scripts/setup.sh    # installs deps and creates .env
 
-# 3. Reload shell & start
-source ~/.zshrc
+# 3. Start local dependencies and services
+docker compose -f infra/docker/docker-compose.yml up -d postgres nats
+pnpm db:push
+pnpm dev
 ```
 
 ## Prerequisites
@@ -44,31 +46,32 @@ Install these **before** running `setup.sh`:
 1. Verifies all prerequisites are installed
 2. `pnpm install` — installs project dependencies
 3. Creates `.env` from `.env.example`
-4. Adds `CLAUDE_PLUGIN_ROOT` to your shell profile (`~/.zshrc` / `~/.bashrc`)
-5. Adds `CLAB_API_URL` for K8s platform state sync
-6. Registers the clab plugin in `~/.claude/settings.json`
+4. Leaves runtime credentials optional for local `cmux` execution
 
-After setup, `claude` works from **any directory** with the clab plugin loaded.
+Local execution uses logged-in Claude/Codex CLI sessions inside `cmux` panes.
 
 ## How It Works
 
 ```
 로컬 PC (에이전트 실행)                  K8s (상태 관리)
 ┌─────────────────────────┐            ┌─────────────────────┐
-│ Claude Code              │            │ api-gateway          │
-│  └─ clab plugin (MCP)    │  상태 동기  │ orchestrator         │
-│      ├─ cmux (실행)       │ ────────→  │ knowledge-service    │
-│      │   ├─ codex CLI    │            │ review-service       │
-│      │   ├─ claude CLI   │            │ dashboard UI         │
-│      │   └─ browser      │            │ postgres + nats      │
-│      └─ K8s API (동기)    │ ←── 대시보드 │                     │
+│ Claude Code / Codex TUI  │            │ api-gateway          │
+│  └─ cmux panes           │  상태 동기  │ orchestrator         │
+│      ├─ codex TUI        │ ────────→  │ knowledge-service    │
+│      ├─ claude TUI       │            │ review-service       │
+│      ├─ browser pane     │            │ dashboard UI         │
+│      └─ notifications    │ ←── 대시보드 │ postgres + nats      │
 └─────────────────────────┘            └─────────────────────┘
 ```
 
-- **All agent execution** runs locally via cmux (codex, claude, browser)
+- **All agent execution** runs locally via `cmux` panes (`codex`, `claude`, browser)
+- **Workers launch interactive TUIs**, not one-shot batch commands, when `EXECUTION_MODE=local`
+- **Agent sessions are sticky per `workspace + role + engine`** so each agent keeps a live pane across tasks
+- **Task completion** is detected from pane-scoped `cmux` notifications first, with TUI idle checks as fallback
 - **State sync** to K8s platform for dashboard, knowledge, review workflows
 - Set `CLAB_API_URL=https://ai.clab.one` to enable platform sync
 - Without `CLAB_API_URL`, the plugin works fully offline (local cmux only)
+- `hyper-proxy` is not part of the intended execution path for this project
 
 ## Manual Setup
 
@@ -77,15 +80,15 @@ After setup, `claude` works from **any directory** with the clab plugin loaded.
 ```bash
 pnpm install
 
-# Create .env and add your API keys
+# Create .env and add optional overrides if needed
 cp .env.example .env
-# ANTHROPIC_API_KEY=sk-ant-xxxxx
-# OPENAI_API_KEY=sk-xxxxx
+# Local cmux execution uses logged-in Claude/Codex CLI sessions by default.
+# API keys are only needed for direct API fallback paths.
 ```
 
 ### 2. Register clab Plugin in Claude Code
 
-The clab plugin connects Claude Code to this platform via MCP (36 tools: codex dispatch, wave orchestration, browser automation, AKB knowledge, etc).
+The clab plugin exposes orchestration tools to Claude Code via MCP. The actual task execution path for local work is `cmux` + interactive Claude/Codex TUIs.
 
 ```bash
 # Set CLAUDE_PLUGIN_ROOT (add to ~/.zshrc or ~/.bashrc)
@@ -145,9 +148,9 @@ claude
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    api-gateway :4000                     │
-│              REST / WebSocket / MCP                      │
+│                REST / WebSocket facade                   │
 ├─────────────┬───────────────────────┬───────────────────┤
-│mission-service│  runtime-manager     │  review-service   │
+│ orchestrator │  runtime-manager     │  review-service   │
 │    :4001    │       :4002           │     :4006         │
 ├─────────────┼───────────┬───────────┼───────────────────┤
 │             │worker-codex│worker-claude│ browser-service │
@@ -174,11 +177,11 @@ Mission
 
 | Service | Port | Role |
 |---------|------|------|
-| api-gateway | 4000 | External entry point (REST/WS/MCP) |
-| mission-service | 4001 | Mission planning, wave scheduling |
-| runtime-manager | 4002 | Session lifecycle, cmux control |
-| worker-codex | 4003 | Codex task execution |
-| worker-claude | 4004 | Claude CLI execution |
+| api-gateway | 4000 | External entry point (REST/WS) |
+| orchestrator | 4001 | Mission planning, wave scheduling |
+| runtime-manager | 4002 | Sticky session lifecycle, `cmux` pane management |
+| worker-codex | 4003 | Codex task execution in `cmux` TUI |
+| worker-claude | 4004 | Claude task execution in `cmux` TUI |
 | browser-service | 4005 | Browser automation |
 | review-service | 4006 | QA and verification |
 | knowledge-service | 4007 | AKB knowledge layer |
@@ -236,11 +239,11 @@ clab-platform (source)          k8s-stg (deployment repo)      K8s Cluster
 ```
 clab-platform/
 ├── apps/
-│   ├── api-gateway/          # REST/WS/MCP facade       :4000
-│   ├── mission-service/      # Mission planner           :4001
-│   ├── runtime-manager/      # Session binding, cmux     :4002
+│   ├── api-gateway/          # REST/WS facade            :4000
+│   ├── orchestrator/         # Mission planner           :4001
+│   ├── runtime-manager/      # Sticky session binding    :4002
 │   ├── worker-codex/         # Codex execution worker    :4003
-│   ├── worker-claude/        # Claude CLI worker         :4004
+│   ├── worker-claude/        # Claude execution worker   :4004
 │   ├── browser-service/      # Browser automation        :4005
 │   ├── review-service/       # QA / verification         :4006
 │   ├── knowledge-service/    # AKB knowledge layer       :4007
@@ -256,7 +259,6 @@ clab-platform/
 │   ├── engines/              # Codex/Claude/Browser runners
 │   ├── telemetry/            # OTel tracing + metrics + logging
 │   ├── sdk/                  # Internal client SDK
-│   ├── mcp-contracts/        # MCP tool schemas
 │   └── knowledge/            # AKB knowledge layer
 ├── schemas/                  # JSON Schema definitions
 ├── scripts/

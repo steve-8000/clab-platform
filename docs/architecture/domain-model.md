@@ -1,80 +1,30 @@
 # clab-platform Domain Model
 
-## Entity Relationship Diagram
+## Core Entity Diagram
 
 ```
-+------------------+       +------------------+       +------------------+
-|     Mission      |       |      Plan        |       |      Wave        |
-+------------------+       +------------------+       +------------------+
-| id (PK)          |1----1 | id (PK)          |1----* | id (PK)          |
-| title            |       | mission_id (FK)  |       | plan_id (FK)     |
-| description      |       | strategy         |       | order            |
-| status           |       | rationale        |       | status           |
-| goal             |       | metadata (JSONB) |       | started_at       |
-| created_by       |       | created_at       |       | completed_at     |
-| created_at       |       | updated_at       |       | created_at       |
-| updated_at       |       +------------------+       | updated_at       |
-| completed_at     |                                   +--------+---------+
-+------------------+                                            |
-                                                           1    |    *
-                                                                v
-+------------------+       +------------------+       +------------------+
-|  AgentSession    |       |    TaskRun       |       |      Task        |
-+------------------+       +------------------+       +------------------+
-| id (PK)          |       | id (PK)          |*----1 | id (PK)          |
-| worker_id        |1----* | task_id (FK)     |       | wave_id (FK)     |
-| pane_id          |       | session_id (FK)  |       | title            |
-| status           |       | attempt          |       | description      |
-| capabilities     |       | status           |       | type             |
-| last_heartbeat   |       | started_at       |       | status           |
-| mission_id (FK)  |       | completed_at     |       | priority         |
-| created_at       |       | exit_code        |       | dependencies[]   |
-| updated_at       |       | error_message    |       | spec (JSONB)     |
-+------------------+       | output (JSONB)   |       | acceptance       |
-                           | created_at       |       |   _criteria      |
-                           +------------------+       | max_retries      |
-                                    |                 | timeout_seconds  |
-                                    | 1               | created_at       |
-                                    v *               | updated_at       |
-                           +------------------+       +------------------+
-                           |    Artifact      |
-                           +------------------+
-                           | id (PK)          |
-                           | task_run_id (FK) |       +------------------+
-                           | type             |       |    Decision      |
-                           | path             |       +------------------+
-                           | content_hash     |       | id (PK)          |
-                           | size_bytes       |       | mission_id (FK)  |
-                           | metadata (JSONB) |       | task_id (FK)?    |
-                           | created_at       |       | type             |
-                           +------------------+       | title            |
-                                                      | context          |
-                           +------------------+       | choice           |
-                           |     Event        |       | rationale        |
-                           +------------------+       | alternatives[]   |
-                           | id (PK)          |       | decided_by       |
-                           | stream           |       | created_at       |
-                           | subject          |       +------------------+
-                           | payload (JSONB)  |
-                           | sequence         |
-                           | timestamp        |
-                           +------------------+
+Mission -> Plan -> Wave -> Task -> TaskRun -> Artifact
+                        \
+                         -> AgentSession -> CapabilityLease
+
+Mission -> Decision
+Mission -> Approval
+EventLog captures emitted events alongside current relational state
 ```
 
 ## Entity Descriptions
 
 ### Mission
 
-The top-level unit of work. A mission represents a complete user goal.
+The top-level unit of work. A mission represents a complete user goal and is the container for plans, waves, tasks, decisions, and approvals.
 
 | Field         | Type      | Description                                         |
 | ------------- | --------- | --------------------------------------------------- |
 | `id`          | UUID      | Primary key                                         |
 | `title`       | text      | Short human-readable name                           |
-| `description` | text      | Detailed description of the goal                    |
-| `status`      | enum      | `PENDING`, `PLANNING`, `EXECUTING`, `REVIEWING`, `COMPLETED`, `FAILED`, `CANCELLED` |
-| `goal`        | text      | The original user prompt/request                    |
-| `created_by`  | text      | Identifier of the requesting user or system         |
+| `objective`   | text      | The original user objective                         |
+| `status`      | enum      | `DRAFT`, `PLANNED`, `RUNNING`, `REVIEWING`, `COMPLETED`, `FAILED`, `ABORTED` |
+| `priority`    | enum      | `LOW`, `NORMAL`, `HIGH`, `CRITICAL`                 |
 | `created_at`  | timestamp | When the mission was created                        |
 | `updated_at`  | timestamp | Last modification time                              |
 | `completed_at`| timestamp | When the mission reached a terminal state           |
@@ -82,13 +32,10 @@ The top-level unit of work. A mission represents a complete user goal.
 **Status transitions:**
 
 ```
-PENDING --> PLANNING --> EXECUTING --> REVIEWING --> COMPLETED
-                |            |            |
-                v            v            v
-              FAILED       FAILED       FAILED
-                                          |
-                                          v
-                                      CANCELLED
+DRAFT --> PLANNED --> RUNNING --> REVIEWING --> COMPLETED
+   |         |            |            |
+   v         v            v            v
+ FAILED    ABORTED      FAILED       FAILED
 ```
 
 ### Plan
@@ -99,9 +46,10 @@ A structured decomposition of a mission into executable waves and tasks.
 | ----------- | ------ | ------------------------------------------------------ |
 | `id`        | UUID   | Primary key                                            |
 | `mission_id`| UUID   | Foreign key to Mission                                 |
-| `strategy`  | text   | The planning strategy used (e.g., `parallel-waves`, `sequential`) |
-| `rationale` | text   | Explanation of why the plan was structured this way    |
-| `metadata`  | JSONB  | Additional planning context (model used, token counts) |
+| `version`   | integer| Plan version                                            |
+| `summary`   | text   | Planner summary                                         |
+| `wave_count`| integer| Number of waves generated                               |
+| `is_active` | bool   | Whether the plan is currently active                    |
 
 Each mission has exactly one active plan. If re-planning is needed (e.g., after a wave failure), the old plan is archived and a new one is created.
 
@@ -113,8 +61,10 @@ A group of tasks that can execute in parallel. Waves execute sequentially (Wave 
 | -------------- | --------- | ------------------------------------------------ |
 | `id`           | UUID      | Primary key                                      |
 | `plan_id`      | UUID      | Foreign key to Plan                              |
-| `order`        | integer   | Execution order (1, 2, 3, ...)                   |
-| `status`       | enum      | `PENDING`, `RUNNING`, `COMPLETED`, `FAILED`      |
+| `ordinal`      | integer   | Execution order (1, 2, 3, ...)                   |
+| `label`        | text      | Human-readable label                               |
+| `status`       | enum      | `PENDING`, `READY`, `RUNNING`, `BLOCKED`, `COMPLETED`, `FAILED` |
+| `directive`    | text      | Optional per-wave instruction                      |
 | `started_at`   | timestamp | When execution began                             |
 | `completed_at` | timestamp | When all tasks in the wave finished              |
 
@@ -130,14 +80,13 @@ An individual unit of work assigned to a single worker.
 | `wave_id`           | UUID     | Foreign key to Wave                               |
 | `title`             | text     | Short description                                 |
 | `description`       | text     | Detailed specification for the worker             |
-| `type`              | enum     | `CODE`, `TEST`, `REVIEW`, `BROWSER`, `SHELL`      |
-| `status`            | enum     | `PENDING`, `DISPATCHED`, `RUNNING`, `COMPLETED`, `FAILED`, `SKIPPED` |
-| `priority`          | integer  | Higher number = higher priority in dispatch queue |
+| `role`              | text     | Assigned role such as `BUILDER`, `PM`, `REVIEWER` |
+| `engine`            | text     | `CODEX`, `CLAUDE`, or `BROWSER`                   |
+| `status`            | enum     | `QUEUED`, `ASSIGNED`, `RUNNING`, `NEEDS_REVIEW`, `SUCCEEDED`, `FAILED`, `BLOCKED`, `CANCELLED` |
 | `dependencies`      | UUID[]   | Task IDs that must complete before this task runs |
-| `spec`              | JSONB    | Task-specific configuration (files to edit, commands to run, etc.) |
-| `acceptance_criteria`| text    | Human-readable criteria for review service        |
+| `acceptance_criteria`| text[]  | Review criteria                                   |
 | `max_retries`       | integer  | Maximum retry attempts (default: 2)               |
-| `timeout_seconds`   | integer  | Maximum execution time (default: 300)             |
+| `timeout_ms`        | integer  | Maximum execution time in ms                      |
 
 **Intra-wave dependencies:** While waves provide coarse ordering, the `dependencies` array allows fine-grained ordering within a wave. A task will not be dispatched until all its dependencies are resolved.
 
@@ -151,41 +100,48 @@ A single execution attempt of a task. A task may have multiple runs (retries).
 | `task_id`       | UUID      | Foreign key to Task                               |
 | `session_id`    | UUID      | Foreign key to AgentSession that executed this run|
 | `attempt`       | integer   | Attempt number (1, 2, 3, ...)                     |
-| `status`        | enum      | `RUNNING`, `COMPLETED`, `FAILED`, `TIMED_OUT`     |
+| `status`        | enum      | `STARTING`, `RUNNING`, `AWAITING_INPUT`, `SUCCEEDED`, `FAILED`, `TIMED_OUT`, `ABORTED` |
 | `started_at`    | timestamp | When execution began                              |
-| `completed_at`  | timestamp | When execution ended                              |
+| `finished_at`   | timestamp | When execution ended                              |
 | `exit_code`     | integer   | Process exit code (0 = success)                   |
-| `error_message` | text      | Error details if failed                           |
-| `output`        | JSONB     | Structured output from the worker                 |
+| `stdout`        | text      | Captured pane output or API output                |
+| `stderr`        | text      | Captured error output                             |
+| `duration_ms`   | integer   | Execution duration                                |
 
 ### AgentSession
 
-Represents a running Codex worker instance.
+Represents a sticky runtime binding between a workspace-local agent (`role + engine`) and a `cmux` pane.
 
 | Field            | Type      | Description                                      |
 | ---------------- | --------- | ------------------------------------------------ |
 | `id`             | UUID      | Primary key                                      |
-| `worker_id`      | text      | Unique identifier for the worker process         |
-| `pane_id`        | text      | tmux pane ID managed by cmux                     |
-| `status`         | enum      | `INITIALIZING`, `IDLE`, `BUSY`, `STALE`, `TERMINATED` |
-| `capabilities`   | text[]    | What this session can do (e.g., `code`, `browser`) |
+| `workspace_id`   | UUID      | Workspace owning the session                     |
+| `role`           | text      | Session role                                     |
+| `engine`         | text      | `CODEX`, `CLAUDE`, or `BROWSER`                  |
+| `pane_id`        | text      | Persistent `cmux` pane ID kept alive across tasks|
+| `state`          | enum      | `IDLE`, `BOUND`, `RUNNING`, `AWAITING_INPUT`, `STALE`, `LOST`, `CLOSED` |
+| `pid`            | integer   | Optional pane process id                         |
 | `last_heartbeat` | timestamp | Last time the worker reported alive              |
-| `mission_id`     | UUID      | Foreign key to Mission (sessions are scoped)     |
+| `metadata`       | JSONB     | Sticky metadata such as `currentTaskId`, `lastTaskId`, provisioning info |
 
 **Lifecycle:**
 
 ```
-INITIALIZING --> IDLE <--> BUSY --> TERMINATED
-                  |                     ^
-                  v                     |
-                STALE ------------------+
+IDLE --> BOUND --> RUNNING --> IDLE
+                     |           |
+                     v           v
+               AWAITING_INPUT   CLOSED
+                     |
+                     v
+                  STALE --> LOST
 ```
 
-- `INITIALIZING`: Pane created, Codex process starting
-- `IDLE`: Ready to accept tasks
-- `BUSY`: Currently executing a task
-- `STALE`: Heartbeat not received within threshold (default: 30s)
-- `TERMINATED`: Cleaned up and no longer running
+- `IDLE`: Ready for reuse by the same workspace/role/engine
+- `BOUND`: Reserved for a task but not yet actively running
+- `RUNNING`: Interactive TUI session is executing the current task inside the existing pane
+- `AWAITING_INPUT`: The pane is waiting for user input
+- `STALE` / `LOST`: Heartbeat or pane output is no longer progressing
+- `CLOSED`: Session has been explicitly torn down, not merely returned to idle
 
 ### Artifact
 
@@ -195,13 +151,13 @@ A file or output produced by a task run.
 | -------------- | --------- | ------------------------------------------------- |
 | `id`           | UUID      | Primary key                                       |
 | `task_run_id`  | UUID      | Foreign key to TaskRun                            |
-| `type`         | enum      | `FILE`, `DIFF`, `LOG`, `SCREENSHOT`, `TEST_RESULT` |
+| `type`         | enum      | `PATCH`, `FILE`, `TEST_REPORT`, `SUMMARY`, `SCREENSHOT`, `LOG`, `DECISION_NOTE`, `KNOWLEDGE_NOTE` |
 | `path`         | text      | Relative file path within the workspace           |
-| `content_hash` | text      | SHA-256 hash for deduplication and verification   |
+| `content`      | text      | Inline content when stored directly               |
 | `size_bytes`   | bigint    | File size                                         |
 | `metadata`     | JSONB     | Additional info (MIME type, line count, etc.)     |
 
-Artifacts are stored on the filesystem and referenced in the database. The `content_hash` enables deduplication -- identical files across runs are stored once.
+Artifacts can represent file outputs, pane transcripts, summaries, screenshots, or derived notes.
 
 ### Decision
 
@@ -212,25 +168,37 @@ Records important decisions made during mission execution, both automated and hu
 | `id`           | UUID      | Primary key                                       |
 | `mission_id`   | UUID      | Foreign key to Mission                            |
 | `task_id`      | UUID      | Optional FK to Task (if decision is task-specific)|
-| `type`         | enum      | `PLANNING`, `RETRY`, `SKIP`, `ABORT`, `OVERRIDE`  |
+| `category`     | enum/text | `ARCHITECTURE`, `IMPLEMENTATION`, `POLICY`, `RECOVERY`, `REVIEW` |
 | `title`        | text      | What was decided                                  |
-| `context`      | text      | Situation that required a decision                |
-| `choice`       | text      | What was chosen                                   |
-| `rationale`    | text      | Why this choice was made                          |
+| `reasoning`    | text      | Why this choice was made                          |
+| `chosen_option`| text      | What was chosen                                   |
 | `alternatives` | text[]    | Other options considered                          |
-| `decided_by`   | text      | `orchestrator`, `user`, or specific agent ID      |
+| `actor_kind`   | text      | `system`, `user`, or agent kind                   |
+| `actor_id`     | text      | Specific actor identifier                         |
 
 Decision tracking provides an audit trail of why the system behaved the way it did. This is especially valuable for post-mortem analysis of failed missions.
 
+### CapabilityLease
+
+Capability leases grant temporary execution rights to a session.
+
+| Field        | Type      | Description                            |
+| ------------ | --------- | -------------------------------------- |
+| `session_id` | UUID      | Foreign key to AgentSession            |
+| `capability` | text      | Granted capability                     |
+| `granted_at` | timestamp | Lease creation time                    |
+| `expires_at` | timestamp | Lease expiry                           |
+| `revoked_at` | timestamp | Revocation time if lease was cancelled |
+
 ### Event (Stored Events)
 
-Persisted copy of NATS events for replay and audit.
+Persisted copy of emitted events for replay and audit.
 
 | Field       | Type      | Description                                        |
 | ----------- | --------- | -------------------------------------------------- |
 | `id`        | UUID      | Primary key                                        |
 | `stream`    | text      | NATS stream name                                   |
-| `subject`   | text      | NATS subject (e.g., `task.completed`)              |
+| `subject`   | text      | NATS subject (e.g., `clab.task.assigned`)          |
 | `payload`   | JSONB     | Full event payload                                 |
 | `sequence`  | bigint    | NATS sequence number for ordering                  |
 | `timestamp` | timestamp | When the event was published                       |

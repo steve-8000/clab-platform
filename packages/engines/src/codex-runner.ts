@@ -2,6 +2,8 @@ import type { CmuxAdapter } from "@clab/cmux-adapter";
 import type { EngineRunner } from "./types.js";
 
 const CODEX_READY_PATTERN = /[$>]\s*$/;
+const CODEX_FOOTER_PATTERN = /gpt-\d(?:\.\d+)?/i;
+const CODEX_PROMPT_PATTERN = /(^|\n)› .*$/m;
 const CODEX_IDLE_PATTERN = /Codex\s*[>$]|waiting for input|█\s*$/i;
 
 export class CodexRunner implements EngineRunner {
@@ -14,22 +16,20 @@ export class CodexRunner implements EngineRunner {
     instruction: string;
     systemPrompt: string;
   }): Promise<void> {
-    // Navigate to working directory
     await this.cmux.sendText(input.paneId, `cd ${input.workingDir}\n`);
     await this.waitForReady(input.paneId, 5000);
 
-    // Launch Codex in full-auto mode with the instruction
-    const escapedInstruction = input.instruction.replace(/'/g, "'\\''");
-    const escapedSystemPrompt = input.systemPrompt.replace(/'/g, "'\\''");
-    const command = `codex --full-auto --system-prompt '${escapedSystemPrompt}' '${escapedInstruction}'\n`;
-    await this.cmux.sendText(input.paneId, command);
-
-    // Wait for Codex to start processing
+    // Launch the interactive Codex TUI inside the cmux pane, then paste the task.
+    await this.cmux.sendText(input.paneId, "codex\n");
     await this.waitForOutput(input.paneId, 10000);
+
+    const initialPrompt = this.buildInitialPrompt(input.systemPrompt, input.instruction);
+    await this.submitPrompt(input.paneId, initialPrompt);
+    await this.waitForOutput(input.paneId, 5000);
   }
 
   async sendInstruction(paneId: string, instruction: string): Promise<void> {
-    await this.cmux.sendText(paneId, `${instruction}\n`);
+    await this.submitPrompt(paneId, instruction);
   }
 
   async readOutput(paneId: string): Promise<string> {
@@ -41,7 +41,9 @@ export class CodexRunner implements EngineRunner {
   }
 
   isIdle(output: string): boolean {
-    return CODEX_IDLE_PATTERN.test(output.trimEnd());
+    const tail = output.slice(-1500).trimEnd();
+    return CODEX_IDLE_PATTERN.test(tail)
+      || (CODEX_PROMPT_PATTERN.test(tail) && CODEX_FOOTER_PATTERN.test(tail));
   }
 
   private async waitForReady(paneId: string, timeoutMs: number): Promise<void> {
@@ -61,6 +63,22 @@ export class CodexRunner implements EngineRunner {
       if (output.length > initialOutput.length) return;
       await this.sleep(300);
     }
+  }
+
+  private buildInitialPrompt(systemPrompt: string, instruction: string): string {
+    return [
+      "Follow this operating mode for the rest of the session:",
+      systemPrompt,
+      "",
+      "Task:",
+      instruction,
+    ].join("\n");
+  }
+
+  private async submitPrompt(paneId: string, prompt: string): Promise<void> {
+    await this.cmux.sendText(paneId, prompt);
+    await this.sleep(150);
+    await this.cmux.sendKey(paneId, "Enter");
   }
 
   private sleep(ms: number): Promise<void> {

@@ -182,12 +182,14 @@ create_env() {
   cat > "$ENV_FILE" << 'ENV_EOF'
 # ============================================================================
 # clab-platform environment variables
-# Copy to .env and fill in your API keys
+# Copy to .env and fill in optional overrides
 # ============================================================================
 
-# --- API Keys (required) ---
-ANTHROPIC_API_KEY=sk-ant-xxxxx
-OPENAI_API_KEY=sk-xxxxx
+# --- API Keys (optional fallback) ---
+# Local cmux execution uses logged-in Claude/Codex CLI sessions.
+# Only set these if you explicitly want direct API-based fallback behavior.
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
 
 # --- Database ---
 DATABASE_URL=postgres://clab:clab_secret@localhost:5432/clab
@@ -202,7 +204,7 @@ JWT_SECRET=change-me-in-production
 LOG_LEVEL=debug
 NODE_ENV=development
 ENV_EOF
-  warn "Created .env — edit it to add your API keys"
+  warn "Created .env — add optional overrides if needed (local cmux uses logged-in CLI sessions)"
 }
 
 # ── K8s deployment info ───────────────────────────────────────────────────
@@ -245,7 +247,7 @@ main() {
   echo ""
   echo "  Next steps:"
   echo "    1. source ${SHELL_RC:-~/.zshrc}    # reload shell"
-  echo "    2. Edit .env with your API keys"
+  echo "    2. Edit .env with optional overrides if needed"
   echo "    3. docker compose -f infra/docker/docker-compose.yml up -d postgres nats"
   echo "    4. pnpm db:push                    # run migrations"
   echo "    5. pnpm dev                        # start all services"

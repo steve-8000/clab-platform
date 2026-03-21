@@ -1,4 +1,4 @@
-import type { CmuxPane, CmuxWorkspace } from "./types.js";
+import type { CmuxNotification, CmuxPane, CmuxWorkspace } from "./types.js";
 
 export interface CmuxAdapter {
   connect(): Promise<void>;
@@ -10,11 +10,10 @@ export interface CmuxAdapter {
   workspaceList(): Promise<CmuxWorkspace[]>;
   workspaceSelect(id: string): Promise<void>;
   workspaceRename(id: string, name: string): Promise<void>;
-  workspaceCleanup(): Promise<{ closed: number }>;
 
   // Pane operations
   paneSplit(direction: "right" | "down", fromPaneId?: string): Promise<CmuxPane>;
-  paneList(workspaceId: string): Promise<CmuxPane[]>;
+  paneList(workspaceId?: string): Promise<CmuxPane[]>;
   paneFocus(paneId: string): Promise<void>;
   paneClose(paneId: string): Promise<void>;
 
@@ -24,7 +23,7 @@ export interface CmuxAdapter {
   readText(paneId: string): Promise<string>;
 
   // Notifications
-  notificationList(): Promise<Array<{ id: string; title?: string; body?: string }>>;
+  notificationList(): Promise<CmuxNotification[]>;
   notificationCreate(title: string, body: string, paneId?: string): Promise<void>;
   notificationClear(): Promise<void>;
 
