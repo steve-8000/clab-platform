@@ -5,5 +5,5 @@ import { logger } from "./deps.js";
 const port = Number(process.env.PORT) || 4001;
 
 serve({ fetch: app.fetch, port }, () => {
-  logger.info(`Mission-service listening on port ${port}`);
+  logger.info(`Orchestrator listening on port ${port}`);
 });

@@ -189,13 +189,30 @@ export const app = new Hono()
       return c.json({ error: "action must be GRANTED or DENIED" }, 400);
     }
 
+    const [approval] = await db.select().from(approvals).where(eq(approvals.id, id));
+    if (!approval) return c.json({ error: "Approval not found" }, 404);
+
     await db.update(approvals).set({
       status: action,
       reviewedBy: body.reviewedBy || "operator",
       reviewedAt: new Date(),
     }).where(eq(approvals.id, id));
 
-    return c.json({ id, status: action });
+    // If GRANTED, notify orchestrator to unblock the task
+    if (action === "GRANTED" && approval.taskId) {
+      const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://orchestrator:4001";
+      try {
+        await fetch(`${ORCHESTRATOR_URL}/v1/missions/${approval.missionId}/tasks/${approval.taskId}/unblock`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+        console.log(`[review] Unblock request sent for task ${approval.taskId}`);
+      } catch (err) {
+        console.warn(`[review] Failed to unblock task ${approval.taskId}:`, err);
+      }
+    }
+
+    return c.json({ id, status: action, taskUnblocked: action === "GRANTED" });
   })
 
   // GET /status/:missionId — Get review status for a mission

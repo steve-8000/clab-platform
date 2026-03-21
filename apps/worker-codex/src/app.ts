@@ -4,36 +4,79 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@clab/db";
 import { eq } from "drizzle-orm";
+import { EventBus, createEvent } from "@clab/events";
 
 const { tasks, taskRuns, artifacts } = schema;
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pass@postgres:5432/clab";
 const sql = postgres(DATABASE_URL);
 const db = drizzle(sql, { schema });
 
+const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
+const NATS_URL = process.env.NATS_URL || "nats://nats:4222";
+
+const eventBus = new EventBus();
+let eventBusReady = false;
+
+async function ensureEventBus(): Promise<void> {
+  if (eventBusReady) return;
+  try {
+    await eventBus.connect(NATS_URL);
+    eventBusReady = true;
+  } catch (err) {
+    console.warn("[worker-codex] EventBus unavailable:", err);
+  }
+}
+
+async function reportHeartbeat(sessionId: string): Promise<void> {
+  try {
+    await fetch(`${RUNTIME_URL}/sessions/${sessionId}/heartbeat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) }),
+    });
+  } catch {}
+}
+
+async function findSessionForTask(taskId: string): Promise<string | undefined> {
+  const sessions = await db.select().from(schema.agentSessions);
+  const session = sessions.find(s => {
+    const meta = s.metadata as Record<string, unknown> | null;
+    return meta?.taskId === taskId && (s.state === "RUNNING" || s.state === "BOUND");
+  });
+  return session?.id;
+}
+
 export async function executeTask(taskId: string): Promise<void> {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task) { console.error(`Task ${taskId} not found`); return; }
 
-  // Create task run
+  await ensureEventBus();
+  const sessionId = await findSessionForTask(taskId);
+
   const [run] = await db.insert(taskRuns).values({
     taskId: task.id,
+    sessionId: sessionId ?? null,
     attempt: 1,
     status: "RUNNING",
   }).returning();
 
-  // Update task to RUNNING
   await db.update(tasks).set({ status: "RUNNING", updatedAt: new Date() }).where(eq(tasks.id, taskId));
 
-  console.log(`[worker-codex] Executing: ${task.title}`);
+  console.log(`[worker-codex] Executing: ${task.title} (session: ${sessionId ?? "none"})`);
 
-  // Execute via Claude API or simulate
+  let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
+  if (sessionId) {
+    heartbeatInterval = setInterval(() => reportHeartbeat(sessionId), 15_000);
+    await reportHeartbeat(sessionId);
+  }
+
   let output: string;
+  const startTime = Date.now();
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-  if (ANTHROPIC_API_KEY) {
-    // Real Claude API call
-    console.log(`[worker-codex] Calling Claude API for: ${task.title}`);
-    try {
+  try {
+    if (ANTHROPIC_API_KEY) {
+      console.log(`[worker-codex] Calling Claude API for: ${task.title}`);
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -44,7 +87,7 @@ export async function executeTask(taskId: string): Promise<void> {
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 4096,
-          system: `You are a Builder agent. Your job is to implement code changes as specified. Output the code changes clearly. Be concise and focused.`,
+          system: "You are a Builder agent. Your job is to implement code changes as specified. Output the code changes clearly. Be concise and focused.",
           messages: [{ role: "user", content: task.description }],
         }),
       });
@@ -53,29 +96,29 @@ export async function executeTask(taskId: string): Promise<void> {
         const data = await res.json() as { content: Array<{ text: string }> };
         output = data.content.map((c) => c.text).join("\n");
       } else {
-        const errText = await res.text();
-        output = `[Claude API Error ${res.status}]: ${errText}`;
+        output = `[Claude API Error ${res.status}]: ${await res.text()}`;
         console.error(`[worker-codex] Claude API error: ${res.status}`);
       }
-    } catch (err) {
-      output = `[Claude API Error]: ${String(err)}`;
-      console.error(`[worker-codex] Claude API call failed:`, err);
+    } else {
+      output = `[SIMULATED] Task "${task.title}" executed by worker-codex.\nDescription: ${task.description}\nRole: ${task.role}`;
+      console.log(`[worker-codex] No ANTHROPIC_API_KEY — simulating`);
     }
-  } else {
-    // Simulation fallback
-    output = `[SIMULATED] Task "${task.title}" executed by worker-codex.\nDescription: ${task.description}\nRole: ${task.role}`;
-    console.log(`[worker-codex] No ANTHROPIC_API_KEY — simulating`);
+  } catch (err) {
+    output = `[Claude API Error]: ${String(err)}`;
+    console.error(`[worker-codex] Claude API call failed:`, err);
+  } finally {
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
   }
 
-  // Update run to SUCCEEDED
+  const durationMs = Date.now() - startTime;
+
   await db.update(taskRuns).set({
     status: "SUCCEEDED",
     stdout: output,
-    durationMs: 1500,
+    durationMs,
     finishedAt: new Date(),
   }).where(eq(taskRuns.id, run.id));
 
-  // Create artifact
   await db.insert(artifacts).values({
     taskRunId: run.id,
     missionId: task.missionId,
@@ -84,10 +127,22 @@ export async function executeTask(taskId: string): Promise<void> {
     metadata: { role: task.role, engine: task.engine },
   });
 
-  // Update task to SUCCEEDED
   await db.update(tasks).set({ status: "SUCCEEDED", completedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, taskId));
 
-  // Post-K: extract insights and store knowledge
+  if (eventBusReady) {
+    await eventBus.publish(createEvent("task.run.completed", {
+      taskId,
+      taskRunId: run.id,
+      status: "SUCCEEDED",
+      durationMs,
+    }, {
+      taskId,
+      missionId: task.missionId,
+      sessionId,
+      actor: { kind: "system", id: "worker-codex" },
+    }));
+  }
+
   try {
     const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
     await fetch(`${KNOWLEDGE_URL}/v1/insights/extract`, {
@@ -99,7 +154,6 @@ export async function executeTask(taskId: string): Promise<void> {
         context: task.description,
       }),
     });
-    // Store knowledge entry for this task
     await fetch(`${KNOWLEDGE_URL}/v1/knowledge`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -115,14 +169,13 @@ export async function executeTask(taskId: string): Promise<void> {
     console.warn(`[worker-codex] Post-K failed (non-fatal):`, err);
   }
 
-  console.log(`[worker-codex] Task ${taskId} completed`);
+  console.log(`[worker-codex] Task ${taskId} completed (${durationMs}ms)`);
 }
 
 export const app = new Hono()
   .use("*", cors())
   .get("/health", (c) => c.json({ status: "ok", service: "worker-codex" }))
 
-  // POST /execute — Execute a task
   .post("/execute", async (c) => {
     const body = await c.req.json();
     const { taskId } = body;

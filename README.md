@@ -56,7 +56,7 @@ After setup, `claude` works from **any directory** with the clab plugin loaded.
 로컬 PC (에이전트 실행)                  K8s (상태 관리)
 ┌─────────────────────────┐            ┌─────────────────────┐
 │ Claude Code              │            │ api-gateway          │
-│  └─ clab plugin (MCP)    │  상태 동기  │ mission-service      │
+│  └─ clab plugin (MCP)    │  상태 동기  │ orchestrator         │
 │      ├─ cmux (실행)       │ ────────→  │ knowledge-service    │
 │      │   ├─ codex CLI    │            │ review-service       │
 │      │   ├─ claude CLI   │            │ dashboard UI         │

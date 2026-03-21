@@ -17,16 +17,16 @@
 
 ```bash
 # All logs for a service
-kubectl logs -l app=mission-service -n clab-platform --tail=100
+kubectl logs -l app=orchestrator -n clab-platform --tail=100
 
 # Follow logs in real-time
-kubectl logs -f deployment/mission-service -n clab-platform
+kubectl logs -f deployment/orchestrator -n clab-platform
 
 # Logs from a specific pod
-kubectl logs pod/mission-service-7f8d9c4b5-x2k9p -n clab-platform
+kubectl logs pod/orchestrator-7f8d9c4b5-x2k9p -n clab-platform
 
 # Previous container logs (if pod restarted)
-kubectl logs pod/mission-service-7f8d9c4b5-x2k9p -n clab-platform --previous
+kubectl logs pod/orchestrator-7f8d9c4b5-x2k9p -n clab-platform --previous
 
 # Logs with timestamps
 kubectl logs -l app=runtime-manager -n clab-platform --timestamps
@@ -40,7 +40,7 @@ kubectl logs -l platform=clab -n clab-platform --tail=500 | grep "ERROR"
 ```bash
 # Services log to stdout in structured JSON (pino format)
 # Use pino-pretty for readable output
-pnpm --filter mission-service dev | pnpm pino-pretty
+pnpm --filter orchestrator dev | pnpm pino-pretty
 
 # Check all service logs simultaneously
 pnpm dev 2>&1 | pnpm pino-pretty
@@ -59,7 +59,7 @@ All services respect the `LOG_LEVEL` environment variable:
 
 ```bash
 # Temporarily increase log level for a deployment
-kubectl set env deployment/mission-service LOG_LEVEL=debug -n clab-platform
+kubectl set env deployment/orchestrator LOG_LEVEL=debug -n clab-platform
 ```
 
 ---
@@ -272,7 +272,7 @@ kubectl exec -it deployment/nats -n clab-platform -- nats stream ls
 kubectl exec -it deployment/nats -n clab-platform -- nats consumer ls TASKS
 
 # Check if consumers are healthy
-kubectl exec -it deployment/nats -n clab-platform -- nats consumer info TASKS mission-service
+kubectl exec -it deployment/nats -n clab-platform -- nats consumer info TASKS orchestrator
 
 # Check NATS pod status
 kubectl describe pod -l app=nats -n clab-platform
@@ -299,14 +299,14 @@ kubectl logs -l app=nats -n clab-platform --tail=50
 
 3. **Consumer stuck**: Delete and recreate:
    ```bash
-   kubectl exec -it deployment/nats -n clab-platform -- nats consumer rm TASKS mission-service
+   kubectl exec -it deployment/nats -n clab-platform -- nats consumer rm TASKS orchestrator
    # The service will recreate its consumer on next connection
-   kubectl rollout restart deployment/mission-service -n clab-platform
+   kubectl rollout restart deployment/orchestrator -n clab-platform
    ```
 
 4. **Network partition**: Services have automatic reconnection logic. Restart affected services:
    ```bash
-   kubectl rollout restart deployment/mission-service -n clab-platform
+   kubectl rollout restart deployment/orchestrator -n clab-platform
    kubectl rollout restart deployment/runtime-manager -n clab-platform
    ```
 
@@ -384,8 +384,8 @@ psql $DATABASE_URL -c "
   WHERE id = '<task-id>';
 "
 
-# Notify the mission-service (via NATS or by restarting it)
-# The mission-service's wave monitor will pick up the pending task
+# Notify the orchestrator (via NATS or by restarting it)
+# The orchestrator's wave monitor will pick up the pending task
 ```
 
 ### Retry all failed tasks in a wave
@@ -460,7 +460,7 @@ If the plan itself was flawed:
 
 ```bash
 # Reset mission to PLANNING status
-# The mission-service will generate a new plan
+# The orchestrator will generate a new plan
 psql $DATABASE_URL -c "
   UPDATE missions SET status = 'PLANNING', updated_at = NOW()
   WHERE id = '<mission-id>';

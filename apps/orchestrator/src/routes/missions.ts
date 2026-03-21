@@ -305,3 +305,38 @@ missionRoutes.get("/", async (c) => {
   const allMissions = await db.select().from(missions);
   return c.json(allMissions);
 });
+
+// POST /:missionId/tasks/:taskId/unblock — Unblock a task after approval is granted
+missionRoutes.post("/:missionId/tasks/:taskId/unblock", async (c) => {
+  const missionId = c.req.param("missionId");
+  const taskId = c.req.param("taskId");
+
+  const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+  if (!task) return c.json({ error: "Task not found" }, 404);
+  if (task.missionId !== missionId) return c.json({ error: "Task does not belong to this mission" }, 400);
+  if (task.status !== "BLOCKED") return c.json({ error: `Task is not BLOCKED (current: ${task.status})` }, 409);
+
+  // BLOCKED → QUEUED → ASSIGNED
+  assertTransition(TASK_TRANSITIONS, task.status as "BLOCKED", "QUEUED");
+  await db.update(tasks).set({ status: "QUEUED", updatedAt: new Date() }).where(eq(tasks.id, taskId));
+
+  assertTransition(TASK_TRANSITIONS, "QUEUED" as const, "ASSIGNED");
+  await db.update(tasks).set({ status: "ASSIGNED", updatedAt: new Date() }).where(eq(tasks.id, taskId));
+
+  // Publish task.assigned event
+  await publishEvent("task.assigned", {
+    assignedTo: task.role,
+    role: task.role,
+    engine: task.engine,
+    title: task.title,
+    description: task.description,
+  }, {
+    taskId: task.id,
+    missionId,
+    waveId: task.waveId,
+  });
+
+  logger.info("Task unblocked after approval", { taskId, missionId });
+
+  return c.json({ status: "ASSIGNED", taskId, missionId });
+});

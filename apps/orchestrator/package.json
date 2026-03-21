@@ -1,5 +1,5 @@
 {
-  "name": "@clab/mission-service",
+  "name": "@clab/orchestrator",
   "version": "2.0.0",
   "private": true,
   "type": "module",

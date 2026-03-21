@@ -90,8 +90,36 @@ export function startHeartbeatMonitor(): void {
       if (active > 0 || stale > 0 || lost > 0) {
         console.log(`[heartbeat] Sessions: ${active} running, ${idle} idle, ${stale} stale, ${lost} lost`);
       }
+
+      // Lease expiry cleanup
+      await cleanupExpiredLeases();
     } catch (err) {
       console.error("[heartbeat] Monitor error:", err);
     }
   }, HEARTBEAT_INTERVAL_MS);
+}
+
+/** Revoke expired leases that haven't been revoked yet */
+async function cleanupExpiredLeases(): Promise<void> {
+  try {
+    const { capabilityLeases } = schema;
+    const allLeases = await db.select().from(capabilityLeases);
+    const now = new Date();
+    let revokedCount = 0;
+
+    for (const lease of allLeases) {
+      if (!lease.revokedAt && new Date(lease.expiresAt) < now) {
+        await db.update(capabilityLeases).set({
+          revokedAt: now,
+        }).where(eq(capabilityLeases.id, lease.id));
+        revokedCount++;
+      }
+    }
+
+    if (revokedCount > 0) {
+      console.log(`[heartbeat] Revoked ${revokedCount} expired lease(s)`);
+    }
+  } catch (err) {
+    console.error("[heartbeat] Lease cleanup error:", err);
+  }
 }

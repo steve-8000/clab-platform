@@ -91,16 +91,16 @@ services:
       timeout: 5s
       retries: 5
 
-  mission-service:
+  orchestrator:
     build:
       context: ../../
       dockerfile: infra/docker/Dockerfile.service
       args:
-        SERVICE_NAME: mission-service
+        SERVICE_NAME: orchestrator
     restart: unless-stopped
     environment:
       <<: *common-env
-      SERVICE_NAME: mission-service
+      SERVICE_NAME: orchestrator
       PORT: "4001"
       MAX_CONCURRENT_MISSIONS: "10"
       MAX_CONCURRENT_TASKS_PER_MISSION: "5"
@@ -160,7 +160,7 @@ services:
     depends_on:
       nats:
         condition: service_healthy
-      mission-service:
+      orchestrator:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4010/healthz"]
@@ -186,7 +186,7 @@ services:
     depends_on:
       nats:
         condition: service_healthy
-      mission-service:
+      orchestrator:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:4011/healthz"]

@@ -7,4 +7,4 @@ export const app = new Hono()
   .use("*", cors())
   .route("/v1/missions", missionRoutes)
   .route("/v1/workspaces", workspaceRoutes)
-  .get("/health", (c) => c.json({ status: "ok", service: "mission-service" }));
+  .get("/health", (c) => c.json({ status: "ok", service: "orchestrator" }));

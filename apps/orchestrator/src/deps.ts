@@ -5,7 +5,7 @@ import { createLogger } from "@clab/telemetry";
 import { EventBus, createEvent } from "@clab/events";
 import type { EventContext } from "@clab/events";
 
-const logger = createLogger("mission-service");
+const logger = createLogger("orchestrator");
 
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pass@postgres:5432/clab";
 const sql = postgres(DATABASE_URL);
@@ -37,7 +37,7 @@ export async function publishEvent(
 ): Promise<void> {
   try {
     if (!eventBusConnected) await connectEventBus();
-    const actor = context.actor ?? { kind: "system" as const, id: "mission-service" };
+    const actor = context.actor ?? { kind: "system" as const, id: "orchestrator" };
     const event = createEvent(type, payload, { ...context, actor });
     await eventBus.publish(event);
 
