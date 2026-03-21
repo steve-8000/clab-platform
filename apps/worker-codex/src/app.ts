@@ -26,8 +26,46 @@ export async function executeTask(taskId: string): Promise<void> {
 
   console.log(`[worker-codex] Executing: ${task.title}`);
 
-  // Simulate execution (will be replaced with real Claude/Codex API later)
-  const output = `Task "${task.title}" executed by worker-codex.\nDescription: ${task.description}\nRole: ${task.role}`;
+  // Execute via Claude API or simulate
+  let output: string;
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
+
+  if (ANTHROPIC_API_KEY) {
+    // Real Claude API call
+    console.log(`[worker-codex] Calling Claude API for: ${task.title}`);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 4096,
+          system: `You are a Builder agent. Your job is to implement code changes as specified. Output the code changes clearly. Be concise and focused.`,
+          messages: [{ role: "user", content: task.description }],
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json() as { content: Array<{ text: string }> };
+        output = data.content.map((c) => c.text).join("\n");
+      } else {
+        const errText = await res.text();
+        output = `[Claude API Error ${res.status}]: ${errText}`;
+        console.error(`[worker-codex] Claude API error: ${res.status}`);
+      }
+    } catch (err) {
+      output = `[Claude API Error]: ${String(err)}`;
+      console.error(`[worker-codex] Claude API call failed:`, err);
+    }
+  } else {
+    // Simulation fallback
+    output = `[SIMULATED] Task "${task.title}" executed by worker-codex.\nDescription: ${task.description}\nRole: ${task.role}`;
+    console.log(`[worker-codex] No ANTHROPIC_API_KEY — simulating`);
+  }
 
   // Update run to SUCCEEDED
   await db.update(taskRuns).set({
@@ -42,7 +80,7 @@ export async function executeTask(taskId: string): Promise<void> {
     taskRunId: run.id,
     missionId: task.missionId,
     type: "SUMMARY",
-    content: `Completed: ${task.title}`,
+    content: output,
     metadata: { role: task.role, engine: task.engine },
   });
 
