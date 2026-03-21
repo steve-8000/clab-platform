@@ -16,6 +16,8 @@
     "@clab/domain": "workspace:*",
     "@clab/db": "workspace:*",
     "drizzle-orm": "^0.38",
+    "nats": "^2.29",
+    "postgres": "^3.4",
     "@clab/events": "workspace:*",
     "@clab/cmux-adapter": "workspace:*",
     "@clab/engines": "workspace:*",

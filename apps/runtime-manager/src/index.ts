@@ -1,8 +1,12 @@
 import { serve } from "@hono/node-server";
 import { app } from "./app.js";
+import { startSessionManager } from "./session-manager.js";
+import { startHeartbeatMonitor } from "./heartbeat.js";
 
-const PORT = Number(process.env.PORT ?? 4002);
+const port = Number(process.env.PORT) || 4002;
 
-serve({ fetch: app.fetch, port: PORT }, (info) => {
-  console.log(`[runtime-manager] listening on http://localhost:${info.port}`);
+serve({ fetch: app.fetch, port }, () => {
+  console.log(`Runtime-Manager listening on port ${port}`);
+  startSessionManager();
+  startHeartbeatMonitor();
 });
