@@ -94,6 +94,12 @@ setup_clab_plugin() {
 
   export CLAUDE_PLUGIN_ROOT="${REPO_ROOT}"
 
+  # Set CLAB_API_URL if not already present
+  if ! grep -q "CLAB_API_URL" "$SHELL_RC" 2>/dev/null; then
+    echo "export CLAB_API_URL=https://ai.clab.one" >> "$SHELL_RC"
+    info "Added CLAB_API_URL to $SHELL_RC (platform state sync)"
+  fi
+
   # Build the MCP server if src exists
   if [[ -f "${REPO_ROOT}/src/mcp/server.ts" ]]; then
     info "Building MCP server..."

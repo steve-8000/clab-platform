@@ -45,9 +45,30 @@ Install these **before** running `setup.sh`:
 2. `pnpm install` — installs project dependencies
 3. Creates `.env` from `.env.example`
 4. Adds `CLAUDE_PLUGIN_ROOT` to your shell profile (`~/.zshrc` / `~/.bashrc`)
-5. Registers the clab plugin in `~/.claude/settings.json`
+5. Adds `CLAB_API_URL` for K8s platform state sync
+6. Registers the clab plugin in `~/.claude/settings.json`
 
 After setup, `claude` works from **any directory** with the clab plugin loaded.
+
+## How It Works
+
+```
+로컬 PC (에이전트 실행)                  K8s (상태 관리)
+┌─────────────────────────┐            ┌─────────────────────┐
+│ Claude Code              │            │ api-gateway          │
+│  └─ clab plugin (MCP)    │  상태 동기  │ mission-service      │
+│      ├─ cmux (실행)       │ ────────→  │ knowledge-service    │
+│      │   ├─ codex CLI    │            │ review-service       │
+│      │   ├─ claude CLI   │            │ dashboard UI         │
+│      │   └─ browser      │            │ postgres + nats      │
+│      └─ K8s API (동기)    │ ←── 대시보드 │                     │
+└─────────────────────────┘            └─────────────────────┘
+```
+
+- **All agent execution** runs locally via cmux (codex, claude, browser)
+- **State sync** to K8s platform for dashboard, knowledge, review workflows
+- Set `CLAB_API_URL=https://ai.clab.one` to enable platform sync
+- Without `CLAB_API_URL`, the plugin works fully offline (local cmux only)
 
 ## Manual Setup
 
