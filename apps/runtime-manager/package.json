@@ -21,7 +21,9 @@
     "@clab/events": "workspace:*",
     "@clab/cmux-adapter": "workspace:*",
     "@clab/engines": "workspace:*",
-    "@clab/telemetry": "workspace:*"
+    "@clab/telemetry": "workspace:*",
+    "@clab/runtime-contracts": "workspace:*",
+    "@clab/policy": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7",

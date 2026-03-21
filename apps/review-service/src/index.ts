@@ -1,44 +1,48 @@
 import { serve } from "@hono/node-server";
 import { app, reviewTask } from "./app.js";
-import { connect, JSONCodec } from "nats";
+import { EventBus, createEvent } from "@clab/events";
+import type { EventEnvelope } from "@clab/events";
 
 const port = Number(process.env.PORT) || 4006;
 const NATS_URL = process.env.NATS_URL || "nats://nats:4222";
-const jc = JSONCodec();
 
-async function startNatsSubscriber() {
+async function startEventSubscriber() {
+  const eventBus = new EventBus();
   try {
-    const nc = await connect({ servers: NATS_URL });
-    console.log("[review-service] Connected to NATS");
+    await eventBus.connect(NATS_URL);
+    console.log("[review-service] EventBus connected");
 
-    const sub = nc.subscribe("clab.*.task.completed");
+    // Subscribe to task.run.completed — auto-review
+    await eventBus.subscribe("task.run.completed", async (event: EventEnvelope) => {
+      try {
+        const taskId = event.taskId ?? (event.payload.taskId as string);
+        if (!taskId) return;
 
-    (async () => {
-      for await (const msg of sub) {
-        try {
-          const data = jc.decode(msg.data) as Record<string, unknown>;
-          console.log(`[review-service] Reviewing task: ${data.taskId}`);
+        console.log(`[review-service] Reviewing task: ${taskId}`);
+        const result = await reviewTask(taskId);
 
-          const result = await reviewTask(data.taskId as string);
-
-          // Publish review result
-          nc.publish(`clab.${data.workspaceId || "*"}.review.completed`, jc.encode({
-            taskId: data.taskId,
-            missionId: data.missionId,
-            passed: result.passed,
-            issues: result.issues,
-          }));
-        } catch (err) {
-          console.error("[review-service] Error reviewing task:", err);
-        }
+        // Publish review result event
+        const eventType = result.passed ? "task.review_passed" : "task.review_failed";
+        await eventBus.publish(createEvent(eventType, {
+          reviewedBy: "review-service",
+          ...(result.passed
+            ? { comments: `Passed (${result.artifactCount} artifacts)` }
+            : { reason: result.issues.join("; "), comments: result.issues.join("; ") }),
+        }, {
+          taskId,
+          missionId: result.missionId,
+          actor: { kind: "system", id: "review-service" },
+        }));
+      } catch (err) {
+        console.error("[review-service] Error reviewing task:", err);
       }
-    })();
+    });
   } catch (err) {
-    console.error("[review-service] NATS connection failed, running HTTP-only mode:", err);
+    console.error("[review-service] EventBus connection failed, running HTTP-only mode:", err);
   }
 }
 
 serve({ fetch: app.fetch, port }, () => {
   console.log(`Review-Service listening on port ${port}`);
-  startNatsSubscriber();
+  startEventSubscriber();
 });

@@ -266,6 +266,12 @@ importers:
       '@clab/events':
         specifier: workspace:*
         version: link:../../packages/events
+      '@clab/policy':
+        specifier: workspace:*
+        version: link:../../packages/policy
+      '@clab/runtime-contracts':
+        specifier: workspace:*
+        version: link:../../packages/runtime-contracts
       '@clab/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry

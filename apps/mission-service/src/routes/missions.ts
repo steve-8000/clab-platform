@@ -2,6 +2,15 @@ import { Hono } from "hono";
 import { db, logger, publishEvent } from "../deps.js";
 import { missions, plans, waves, tasks } from "@clab/db";
 import { eq } from "drizzle-orm";
+import {
+  MISSION_TRANSITIONS,
+  WAVE_TRANSITIONS,
+  TASK_TRANSITIONS,
+  assertTransition,
+} from "@clab/domain";
+import { PolicyEngine } from "@clab/policy";
+
+const policyEngine = new PolicyEngine();
 
 export const missionRoutes = new Hono();
 
@@ -141,8 +150,16 @@ missionRoutes.post("/", async (c) => {
     }
   }
 
-  // 3. Update mission to PLANNED
+  // 3. State machine: DRAFT → PLANNED
+  assertTransition(MISSION_TRANSITIONS, "DRAFT", "PLANNED");
   await db.update(missions).set({ status: "PLANNED", updatedAt: new Date() }).where(eq(missions.id, mission.id));
+
+  // 4. Publish mission.planned event
+  await publishEvent("mission.planned", {
+    waveCount: allWaves.length,
+    taskCount: allTasks.length,
+    planSummary: `${title} (${allTasks.length} tasks, ${allWaves.length} waves)`,
+  }, { missionId: mission.id, workspaceId: workspaceId });
 
   logger.info("Mission planned", {
     missionId: mission.id,
@@ -163,42 +180,111 @@ missionRoutes.post("/", async (c) => {
 missionRoutes.post("/:id/start", async (c) => {
   const id = c.req.param("id");
 
-  // Update mission to RUNNING
+  // 1. Load mission and validate state transition
+  const [missionData] = await db.select().from(missions).where(eq(missions.id, id));
+  if (!missionData) return c.json({ error: "Mission not found" }, 404);
+
+  assertTransition(MISSION_TRANSITIONS, missionData.status as "PLANNED", "RUNNING");
   await db.update(missions).set({ status: "RUNNING", updatedAt: new Date() }).where(eq(missions.id, id));
 
-  // Update wave to RUNNING
+  // 2. Start first wave only (subsequent waves triggered by wave completion)
   const missionWaves = await db.select().from(waves).where(eq(waves.missionId, id));
-  for (const wave of missionWaves) {
-    await db.update(waves).set({ status: "RUNNING", startedAt: new Date() }).where(eq(waves.id, wave.id));
-  }
+  const sortedWaves = missionWaves.sort((a, b) => a.ordinal - b.ordinal);
+  const firstWave = sortedWaves[0];
 
-  // Update tasks to ASSIGNED
-  const missionTasks = await db.select().from(tasks).where(eq(tasks.missionId, id));
-  for (const task of missionTasks) {
-    await db.update(tasks).set({ status: "ASSIGNED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
-  }
+  if (firstWave) {
+    assertTransition(WAVE_TRANSITIONS, firstWave.status as "PENDING", "READY");
+    await db.update(waves).set({ status: "READY" }).where(eq(waves.id, firstWave.id));
 
-    // Resolve workspaceId for NATS subject scoping
-    const [missionData] = await db.select().from(missions).where(eq(missions.id, id));
-    const wsId = missionData?.workspaceId || "default";
+    assertTransition(WAVE_TRANSITIONS, "READY" as const, "RUNNING");
+    await db.update(waves).set({ status: "RUNNING", startedAt: new Date() }).where(eq(waves.id, firstWave.id));
 
-    // Emit events for each assigned task
-    for (const task of missionTasks) {
-      await publishEvent(`clab.${wsId}.task.assigned`, {
+    // 3. Assign tasks in the first wave (with policy evaluation)
+    const waveTasks = await db.select().from(tasks).where(eq(tasks.waveId, firstWave.id));
+    const policyResults: Array<{ taskId: string; allowed: boolean; reason: string; riskLevel?: string }> = [];
+
+    for (const task of waveTasks) {
+      // Policy evaluation before assignment
+      const policyDecision = policyEngine.evaluate({
+        role: task.role as any,
+        action: task.description,
+        context: { title: task.title, engine: task.engine },
+      });
+
+      if (!policyDecision.allow) {
+        // Task blocked by policy — mark as BLOCKED
+        assertTransition(TASK_TRANSITIONS, task.status as "QUEUED", "BLOCKED");
+        await db.update(tasks).set({ status: "BLOCKED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
+        policyResults.push({
+          taskId: task.id,
+          allowed: false,
+          reason: policyDecision.reason,
+          riskLevel: policyDecision.riskLevel,
+        });
+
+        await publishEvent("approval.requested", {
+          approvalId: task.id,
+          reason: policyDecision.reason,
+        }, {
+          taskId: task.id,
+          missionId: id,
+          workspaceId: missionData.workspaceId,
+        });
+
+        logger.warn("Task blocked by policy", { taskId: task.id, reason: policyDecision.reason });
+        continue;
+      }
+
+      assertTransition(TASK_TRANSITIONS, task.status as "QUEUED", "ASSIGNED");
+      await db.update(tasks).set({ status: "ASSIGNED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
+      policyResults.push({
         taskId: task.id,
-        missionId: id,
-        waveId: task.waveId,
+        allowed: true,
+        reason: "Policy check passed",
+        riskLevel: policyDecision.riskLevel,
+      });
+
+      // 4. Publish typed event via EventBus
+      await publishEvent("task.assigned", {
+        assignedTo: task.role,
         role: task.role,
         engine: task.engine,
         title: task.title,
         description: task.description,
-        workspaceId: wsId,
+      }, {
+        taskId: task.id,
+        missionId: id,
+        waveId: firstWave.id,
+        workspaceId: missionData.workspaceId,
       });
     }
 
-  logger.info("Mission started", { missionId: id, tasks: missionTasks.length });
+    // 5. Publish mission.started event
+    await publishEvent("mission.started", {
+      startedAt: new Date().toISOString(),
+    }, { missionId: id, workspaceId: missionData.workspaceId });
 
-  return c.json({ status: "RUNNING", tasksAssigned: missionTasks.length });
+    logger.info("Mission started", {
+      missionId: id,
+      wave: firstWave.ordinal,
+      tasks: waveTasks.length,
+      totalWaves: sortedWaves.length,
+    });
+
+    const assigned = policyResults.filter(r => r.allowed).length;
+    const blocked = policyResults.filter(r => !r.allowed).length;
+
+    return c.json({
+      status: "RUNNING",
+      activeWave: firstWave.ordinal,
+      tasksAssigned: assigned,
+      tasksBlocked: blocked,
+      totalWaves: sortedWaves.length,
+      policyResults,
+    });
+  }
+
+  return c.json({ status: "RUNNING", tasksAssigned: 0 });
 });
 
 // GET /:id — Get mission with all related data

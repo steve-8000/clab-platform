@@ -2,6 +2,8 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@clab/db";
 import { createLogger } from "@clab/telemetry";
+import { EventBus, createEvent } from "@clab/events";
+import type { EventContext } from "@clab/events";
 
 const logger = createLogger("mission-service");
 
@@ -11,26 +13,68 @@ export const db = drizzle(sql, { schema });
 
 export { logger };
 
-import { connect, JSONCodec } from "nats";
-import type { NatsConnection } from "nats";
+// --- EventBus (replaces raw NATS) ---
 
-let nc: NatsConnection | null = null;
-const jc = JSONCodec();
+const eventBus = new EventBus();
+let eventBusConnected = false;
 
-export async function getNats(): Promise<NatsConnection> {
-  if (!nc) {
-    const url = process.env.NATS_URL || "nats://nats:4222";
-    nc = await connect({ servers: url });
-    logger.info("Connected to NATS", { url });
-  }
-  return nc;
-}
-
-export async function publishEvent(subject: string, data: Record<string, unknown>): Promise<void> {
+export async function connectEventBus(): Promise<void> {
+  if (eventBusConnected) return;
+  const url = process.env.NATS_URL || "nats://nats:4222";
   try {
-    const conn = await getNats();
-    conn.publish(subject, jc.encode(data));
+    await eventBus.connect(url);
+    eventBusConnected = true;
+    logger.info("EventBus connected", { url });
   } catch (err) {
-    logger.error("Failed to publish event", { subject, error: String(err) });
+    logger.error("EventBus connection failed", { url, error: String(err) });
   }
 }
+
+export async function publishEvent(
+  type: string,
+  payload: Record<string, unknown>,
+  context: EventContext = {},
+): Promise<void> {
+  try {
+    if (!eventBusConnected) await connectEventBus();
+    const actor = context.actor ?? { kind: "system" as const, id: "mission-service" };
+    const event = createEvent(type, payload, { ...context, actor });
+    await eventBus.publish(event);
+
+    // Audit: persist to events table
+    await persistEvent(type, payload, actor, context);
+  } catch (err) {
+    logger.error("Failed to publish event", { type, error: String(err) });
+  }
+}
+
+/** Persist event to DB events table for audit trail */
+async function persistEvent(
+  type: string,
+  payload: Record<string, unknown>,
+  actor: { kind: string; id: string },
+  context: EventContext,
+): Promise<void> {
+  try {
+    const { events } = await import("@clab/db");
+    await db.insert(events).values({
+      type,
+      version: 1,
+      occurredAt: new Date(),
+      missionId: context.missionId ?? null,
+      waveId: context.waveId ?? null,
+      taskId: context.taskId ?? null,
+      taskRunId: context.taskRunId ?? null,
+      sessionId: context.sessionId ?? null,
+      workspaceId: context.workspaceId ?? null,
+      actorKind: actor.kind,
+      actorId: actor.id,
+      payload,
+    });
+  } catch (err) {
+    // Don't fail the main flow if audit logging fails
+    logger.warn("Failed to persist audit event", { type, error: String(err) });
+  }
+}
+
+export { eventBus };

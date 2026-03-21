@@ -4,6 +4,13 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@clab/db";
 import { eq } from "drizzle-orm";
+import {
+  TASK_TRANSITIONS,
+  WAVE_TRANSITIONS,
+  MISSION_TRANSITIONS,
+  assertTransition,
+  canTransition,
+} from "@clab/domain";
 
 const { tasks, taskRuns, waves, missions, artifacts, approvals } = schema;
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pass@postgres:5432/clab";
@@ -74,25 +81,70 @@ export async function reviewTask(taskId: string): Promise<{ passed: boolean; iss
 
   console.log(`[review] Task ${taskId}: ${passed ? "PASSED" : "FAILED"} (risk: ${risk.level}/${risk.score})`);
 
-  // 5. If passed, check if wave is complete
+  // 5. If passed, update task status and check wave completion
   if (passed) {
+    // Task → SUCCEEDED
+    if (canTransition(TASK_TRANSITIONS, task.status as "RUNNING", "SUCCEEDED")) {
+      assertTransition(TASK_TRANSITIONS, task.status as "RUNNING", "SUCCEEDED");
+      await db.update(tasks).set({ status: "SUCCEEDED", completedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, taskId));
+    }
+
     const waveTasks = await db.select().from(tasks).where(eq(tasks.waveId, task.waveId));
     const allDone = waveTasks.every(t => t.status === "SUCCEEDED" || t.id === taskId);
 
     if (allDone) {
-      await db.update(waves).set({ status: "COMPLETED", completedAt: new Date() }).where(eq(waves.id, task.waveId));
-      console.log(`[review] Wave ${task.waveId} completed`);
+      // Wave → COMPLETED
+      const [wave] = await db.select().from(waves).where(eq(waves.id, task.waveId));
+      if (wave && canTransition(WAVE_TRANSITIONS, wave.status as "RUNNING", "COMPLETED")) {
+        assertTransition(WAVE_TRANSITIONS, wave.status as "RUNNING", "COMPLETED");
+        await db.update(waves).set({ status: "COMPLETED", completedAt: new Date() }).where(eq(waves.id, task.waveId));
+        console.log(`[review] Wave ${task.waveId} RUNNING→COMPLETED`);
+      }
 
+      // Check for next wave or mission completion
       const missionWaves = await db.select().from(waves).where(eq(waves.missionId, task.missionId));
-      const allWavesDone = missionWaves.every(w => w.status === "COMPLETED" || w.id === task.waveId);
+      const sortedWaves = missionWaves.sort((a, b) => a.ordinal - b.ordinal);
+      const completedWaveIndex = sortedWaves.findIndex(w => w.id === task.waveId);
+      const nextWave = sortedWaves[completedWaveIndex + 1];
 
-      if (allWavesDone) {
-        await db.update(missions).set({
-          status: "COMPLETED",
-          completedAt: new Date(),
-          updatedAt: new Date(),
-        }).where(eq(missions.id, task.missionId));
-        console.log(`[review] Mission ${task.missionId} completed!`);
+      if (nextWave && nextWave.status === "PENDING") {
+        // Start next wave cascade: PENDING → READY → RUNNING
+        assertTransition(WAVE_TRANSITIONS, "PENDING", "READY");
+        await db.update(waves).set({ status: "READY" }).where(eq(waves.id, nextWave.id));
+
+        assertTransition(WAVE_TRANSITIONS, "READY", "RUNNING");
+        await db.update(waves).set({ status: "RUNNING", startedAt: new Date() }).where(eq(waves.id, nextWave.id));
+
+        // Assign tasks in the next wave
+        const nextWaveTasks = await db.select().from(tasks).where(eq(tasks.waveId, nextWave.id));
+        for (const nTask of nextWaveTasks) {
+          if (canTransition(TASK_TRANSITIONS, nTask.status as "QUEUED", "ASSIGNED")) {
+            assertTransition(TASK_TRANSITIONS, nTask.status as "QUEUED", "ASSIGNED");
+            await db.update(tasks).set({ status: "ASSIGNED", updatedAt: new Date() }).where(eq(tasks.id, nTask.id));
+          }
+        }
+
+        console.log(`[review] Wave cascade: wave ${nextWave.ordinal} started (${nextWaveTasks.length} tasks)`);
+      } else {
+        // All waves done — check mission completion
+        const allWavesDone = sortedWaves.every(w => w.status === "COMPLETED" || w.id === task.waveId);
+
+        if (allWavesDone) {
+          // Mission RUNNING → REVIEWING → COMPLETED
+          const [mission] = await db.select().from(missions).where(eq(missions.id, task.missionId));
+          if (mission && canTransition(MISSION_TRANSITIONS, mission.status as "RUNNING", "REVIEWING")) {
+            assertTransition(MISSION_TRANSITIONS, mission.status as "RUNNING", "REVIEWING");
+            await db.update(missions).set({ status: "REVIEWING", updatedAt: new Date() }).where(eq(missions.id, task.missionId));
+
+            assertTransition(MISSION_TRANSITIONS, "REVIEWING", "COMPLETED");
+            await db.update(missions).set({
+              status: "COMPLETED",
+              completedAt: new Date(),
+              updatedAt: new Date(),
+            }).where(eq(missions.id, task.missionId));
+            console.log(`[review] Mission ${task.missionId} RUNNING→REVIEWING→COMPLETED`);
+          }
+        }
       }
     }
   }
