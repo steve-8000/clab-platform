@@ -41,11 +41,35 @@ missionRoutes.post("/", async (c) => {
     directive: objective,
   }).returning();
 
+  // 2b. Pre-K: retrieve related knowledge
+  let enrichedDescription = objective;
+  try {
+    const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
+    const preKRes = await fetch(`${KNOWLEDGE_URL}/v1/pre-k/retrieve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: objective, roleId: body.role || "BUILDER" }),
+    });
+    if (preKRes.ok) {
+      const preK = await preKRes.json() as { keywords: string[]; relatedDocs: Array<{ path: string; excerpt: string }>; warnings: string[] };
+      if (preK.relatedDocs?.length > 0) {
+        const context = preK.relatedDocs.map((d: { path: string; excerpt: string }) => `[${d.path}]: ${d.excerpt}`).join("\n");
+        enrichedDescription = `${objective}\n\n## Prior Knowledge\n${context}`;
+        logger.info("Pre-K enriched", { keywords: preK.keywords, docs: preK.relatedDocs.length });
+      }
+      if (preK.warnings?.length > 0) {
+        enrichedDescription += `\n\n## Warnings\n${preK.warnings.join("\n")}`;
+      }
+    }
+  } catch (err) {
+    logger.warn("Pre-K retrieval failed, proceeding without", { error: String(err) });
+  }
+
   const [task] = await db.insert(tasks).values({
     waveId: wave.id,
     missionId: mission.id,
     title: title,
-    description: objective,
+    description: enrichedDescription,
     role: body.role || "BUILDER",
     engine: body.engine || "CODEX",
     status: "QUEUED",

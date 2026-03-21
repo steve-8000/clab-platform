@@ -49,6 +49,34 @@ export async function executeTask(taskId: string): Promise<void> {
   // Update task to SUCCEEDED
   await db.update(tasks).set({ status: "SUCCEEDED", completedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, taskId));
 
+  // Post-K: extract insights and store knowledge
+  try {
+    const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
+    await fetch(`${KNOWLEDGE_URL}/v1/insights/extract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        taskRunId: run.id,
+        result: { status: "SUCCEEDED", summary: `Completed: ${task.title}`, output },
+        context: task.description,
+      }),
+    });
+    // Store knowledge entry for this task
+    await fetch(`${KNOWLEDGE_URL}/v1/knowledge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        topic: task.title,
+        content: `Task completed: ${task.title}\n\nDescription: ${task.description}\n\nOutput: ${output}`,
+        tags: [task.role, task.engine, "auto-extracted"],
+        source: "EXTRACTED",
+      }),
+    });
+    console.log(`[worker-codex] Post-K: knowledge stored for ${taskId}`);
+  } catch (err) {
+    console.warn(`[worker-codex] Post-K failed (non-fatal):`, err);
+  }
+
   console.log(`[worker-codex] Task ${taskId} completed`);
 }
 
