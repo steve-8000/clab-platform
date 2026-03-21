@@ -5,6 +5,60 @@ import { eq } from "drizzle-orm";
 
 export const missionRoutes = new Hono();
 
+// --- Helper functions for multi-wave planning with role routing ---
+
+function routeRole(text: string): string {
+  const lower = text.toLowerCase();
+  if (/\b(test|spec|coverage|unit test|e2e)\b/.test(lower)) return "BUILDER";
+  if (/\b(design|architect|structure|interface|schema)\b/.test(lower)) return "ARCHITECT";
+  if (/\b(research|analyze|investigate|study|compare)\b/.test(lower)) return "RESEARCH_ANALYST";
+  if (/\b(review|verify|qa|check|audit)\b/.test(lower)) return "REVIEWER";
+  if (/\b(plan|decompose|prioritize|breakdown|roadmap)\b/.test(lower)) return "PM";
+  return "BUILDER";
+}
+
+function routeEngine(role: string): string {
+  return role === "REVIEWER" || role === "PM" ? "CLAUDE" : "CODEX";
+}
+
+interface TaskSpec {
+  title: string;
+  description: string;
+  role: string;
+  engine: string;
+}
+
+function decomposeObjective(objective: string, defaultRole: string, defaultEngine: string): TaskSpec[] {
+  const specs: TaskSpec[] = [];
+
+  // Split by "and" or numbered items or semicolons
+  const parts = objective
+    .split(/(?:\band\b|;|\d+\.\s)/)
+    .map(p => p.trim())
+    .filter(p => p.length > 10);
+
+  if (parts.length > 1) {
+    for (const part of parts) {
+      const role = routeRole(part) || defaultRole;
+      specs.push({
+        title: part.length > 60 ? part.slice(0, 57) + "..." : part,
+        description: part,
+        role,
+        engine: routeEngine(role),
+      });
+    }
+  } else {
+    specs.push({
+      title: objective.length > 60 ? objective.slice(0, 57) + "..." : objective,
+      description: objective,
+      role: defaultRole,
+      engine: defaultEngine,
+    });
+  }
+
+  return specs;
+}
+
 // POST / — Create mission + auto-plan
 missionRoutes.post("/", async (c) => {
   const body = await c.req.json();
@@ -25,66 +79,83 @@ missionRoutes.post("/", async (c) => {
 
   logger.info("Mission created", { missionId: mission.id });
 
-  // 2. Auto-plan: create plan + 1 wave + 1 task
+  // 2. Smart planning: analyze objective for multi-wave/multi-task
+  const role = body.role || routeRole(objective);
+  const engine = body.engine || routeEngine(role);
+
+  const taskSpecs = decomposeObjective(objective, role, engine);
+  const waveCount = taskSpecs.length > 3 ? 2 : 1; // Split into 2 waves if >3 tasks
+
   const [plan] = await db.insert(plans).values({
     missionId: mission.id,
-    summary: `Plan for: ${title}`,
-    waveCount: 1,
+    summary: `Plan for: ${title} (${taskSpecs.length} tasks, ${waveCount} waves)`,
+    waveCount,
   }).returning();
 
-  const [wave] = await db.insert(waves).values({
-    planId: plan.id,
-    missionId: mission.id,
-    ordinal: 1,
-    label: "Wave 1",
-    status: "PENDING",
-    directive: objective,
-  }).returning();
+  const allTasks = [];
+  const allWaves = [];
 
-  // 2b. Pre-K: retrieve related knowledge
-  let enrichedDescription = objective;
-  try {
-    const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
-    const preKRes = await fetch(`${KNOWLEDGE_URL}/v1/pre-k/retrieve`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: objective, roleId: body.role || "BUILDER" }),
-    });
-    if (preKRes.ok) {
-      const preK = await preKRes.json() as { keywords: string[]; relatedDocs: Array<{ path: string; excerpt: string }>; warnings: string[] };
-      if (preK.relatedDocs?.length > 0) {
-        const context = preK.relatedDocs.map((d: { path: string; excerpt: string }) => `[${d.path}]: ${d.excerpt}`).join("\n");
-        enrichedDescription = `${objective}\n\n## Prior Knowledge\n${context}`;
-        logger.info("Pre-K enriched", { keywords: preK.keywords, docs: preK.relatedDocs.length });
-      }
-      if (preK.warnings?.length > 0) {
-        enrichedDescription += `\n\n## Warnings\n${preK.warnings.join("\n")}`;
-      }
+  const tasksPerWave = Math.ceil(taskSpecs.length / waveCount);
+
+  for (let w = 0; w < waveCount; w++) {
+    const [wave] = await db.insert(waves).values({
+      planId: plan.id,
+      missionId: mission.id,
+      ordinal: w + 1,
+      label: `Wave ${w + 1}`,
+      status: "PENDING",
+      directive: w === 0 ? objective : `Continue: ${objective}`,
+    }).returning();
+    allWaves.push(wave);
+
+    const waveTasks = taskSpecs.slice(w * tasksPerWave, (w + 1) * tasksPerWave);
+    for (const spec of waveTasks) {
+      // Pre-K enrichment
+      let enrichedDesc = spec.description;
+      try {
+        const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
+        const preKRes = await fetch(`${KNOWLEDGE_URL}/v1/pre-k/retrieve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ task: spec.description, roleId: spec.role }),
+        });
+        if (preKRes.ok) {
+          const preK = await preKRes.json() as any;
+          if (preK.relatedDocs?.length > 0) {
+            const context = preK.relatedDocs.map((d: any) => `[${d.path}]: ${d.excerpt}`).join("\n");
+            enrichedDesc = `${spec.description}\n\n## Prior Knowledge\n${context}`;
+          }
+        }
+      } catch {}
+
+      const [task] = await db.insert(tasks).values({
+        waveId: wave.id,
+        missionId: mission.id,
+        title: spec.title,
+        description: enrichedDesc,
+        role: spec.role,
+        engine: spec.engine,
+        status: "QUEUED",
+      }).returning();
+      allTasks.push(task);
     }
-  } catch (err) {
-    logger.warn("Pre-K retrieval failed, proceeding without", { error: String(err) });
   }
-
-  const [task] = await db.insert(tasks).values({
-    waveId: wave.id,
-    missionId: mission.id,
-    title: title,
-    description: enrichedDescription,
-    role: body.role || "BUILDER",
-    engine: body.engine || "CODEX",
-    status: "QUEUED",
-  }).returning();
 
   // 3. Update mission to PLANNED
   await db.update(missions).set({ status: "PLANNED", updatedAt: new Date() }).where(eq(missions.id, mission.id));
 
-  logger.info("Mission planned", { missionId: mission.id, planId: plan.id, waveId: wave.id, taskId: task.id });
+  logger.info("Mission planned", {
+    missionId: mission.id,
+    planId: plan.id,
+    waves: allWaves.length,
+    tasks: allTasks.length,
+  });
 
   return c.json({
     mission: { ...mission, status: "PLANNED" },
     plan,
-    wave,
-    task,
+    waves: allWaves,
+    tasks: allTasks,
   }, 201);
 });
 
