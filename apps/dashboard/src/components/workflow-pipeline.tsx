@@ -1,4 +1,4 @@
-import { PipelineStats } from "@/lib/api";
+import type { PipelineStats } from "@/types";
 
 const STAGES = [
   { key: "preK" as const, label: "Pre-K", sub: "Knowledge Retrieval", color: "text-purple-400", bg: "bg-purple-400", border: "border-purple-800" },
@@ -58,7 +58,7 @@ export function WorkflowPipeline({ pipeline }: { pipeline: PipelineStats }) {
                 <p className="text-[10px] text-gray-500 mt-0.5">{stage.sub}</p>
               </div>
               {i < STAGES.length - 1 && (
-                <div className="hidden md:block absolute top-1/2 -right-2.5 transform -translate-y-1/2 text-gray-600 text-xs z-10">→</div>
+                <div className="hidden md:block absolute top-1/2 -right-2.5 transform -translate-y-1/2 text-gray-600 text-xs z-10">{"\u2192"}</div>
               )}
             </div>
           );
@@ -67,7 +67,7 @@ export function WorkflowPipeline({ pipeline }: { pipeline: PipelineStats }) {
 
       {pipeline.failed > 0 && (
         <div className="mt-3 flex items-center gap-2 text-red-400 text-sm">
-          <span>✗</span>
+          <span>{"\u2717"}</span>
           <span>{pipeline.failed} failed tasks</span>
         </div>
       )}

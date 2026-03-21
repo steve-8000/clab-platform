@@ -1,18 +1,45 @@
 import { Hono } from "hono";
 
-const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://orchestrator:4001";
-const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
-const REVIEW_URL = process.env.REVIEW_SERVICE_URL || "http://review-service:4006";
-const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
+const MISSION_SERVICE_URL = process.env.MISSION_SERVICE_URL || "http://mission-service:4001";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
+function safeError(message: string, err?: unknown): Record<string, string> {
+  if (IS_PRODUCTION || !err) return { error: message };
+  return { error: message, detail: String(err) };
+}
 
 const rest = new Hono();
 
-// --- Proxy helpers ---
+// Proxy all /missions/* to mission-service
+rest.all("/missions/*", async (c) => {
+  const path = c.req.path.replace("/v1", "");  // /v1/missions/xxx -> /v1/missions/xxx
+  const url = `${MISSION_SERVICE_URL}/v1${path.startsWith("/missions") ? path : "/missions" + path}`;
 
-async function proxyRequest(
-  c: { req: { method: string; text: () => Promise<string> } },
-  url: string,
-) {
+  const init: RequestInit = {
+    method: c.req.method,
+    headers: { "Content-Type": "application/json" },
+  };
+
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    init.body = await c.req.text();
+  }
+
+  try {
+    const res = await fetch(url, init);
+    const data = await res.text();
+    return new Response(data, {
+      status: res.status,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    return c.json(safeError("Mission service unavailable", err), 502);
+  }
+});
+
+// Proxy /workspaces/* to mission-service
+rest.all("/workspaces/*", async (c) => {
+  const path = c.req.path.replace("/v1", "");
+  const url = `${MISSION_SERVICE_URL}/v1${path}`;
   const init: RequestInit = {
     method: c.req.method,
     headers: { "Content-Type": "application/json" },
@@ -20,99 +47,177 @@ async function proxyRequest(
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
     init.body = await c.req.text();
   }
-  const res = await fetch(url, init);
-  return new Response(await res.text(), {
-    status: res.status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
-// --- Proxy routes ---
-
-// Proxy /missions/* to orchestrator
-rest.all("/missions/*", async (c) => {
-  const path = c.req.path.replace("/v1", "");
-  const url = `${ORCHESTRATOR_URL}/v1${path.startsWith("/missions") ? path : "/missions" + path}`;
   try {
-    return await proxyRequest(c, url);
+    const res = await fetch(url, init);
+    return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json" } });
   } catch (err) {
-    return c.json({ error: "Orchestrator unavailable", detail: String(err) }, 502);
+    return c.json({ error: "Mission service unavailable" }, 502);
   }
 });
 
-// Proxy /workspaces/* to orchestrator
-rest.all("/workspaces/*", async (c) => {
-  const path = c.req.path.replace("/v1", "");
+// Dashboard aggregate endpoint
+rest.get("/dashboard", async (c) => {
+  const workspaceId = c.req.query("workspaceId");
+  const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
+
   try {
-    return await proxyRequest(c, `${ORCHESTRATOR_URL}/v1${path}`);
+    // Fetch missions
+    const missionsRes = await fetch(`${MISSION_SERVICE_URL}/v1/missions`);
+    const allMissions = missionsRes.ok ? await missionsRes.json() as Array<Record<string, unknown>> : [];
+
+    // Filter by workspaceId if provided
+    const filtered = workspaceId
+      ? allMissions.filter((m) => m.workspaceId === workspaceId)
+      : allMissions;
+
+    // Fetch sessions
+    const sessionsRes = await fetch(`${RUNTIME_URL}/sessions`);
+    const allSessions = sessionsRes.ok ? await sessionsRes.json() as Array<Record<string, unknown>> : [];
+
+    const activeMissions = filtered.filter((m) => m.status === "RUNNING").length;
+    const completedMissions = filtered.filter((m) => m.status === "COMPLETED").length;
+    const failedMissions = filtered.filter((m) => m.status === "FAILED").length;
+    const runningSessions = allSessions.filter((s) => s.state === "RUNNING").length;
+    const staleSessions = allSessions.filter((s) => s.state === "STALE").length;
+
+    // Fetch knowledge stats + recent entries + insights
+    const KNOWLEDGE_SVC = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
+    let knowledgeStats = { totalEntries: 0, topics: 0, lastUpdated: null as string | null };
+    let recentKnowledge: Array<Record<string, unknown>> = [];
+    let recentInsights: Array<Record<string, unknown>> = [];
+    try {
+      const [kbStatusRes, kbSearchRes, insightsRes] = await Promise.all([
+        fetch(`${KNOWLEDGE_SVC}/v1/knowledge/status`, { signal: AbortSignal.timeout(3000) }),
+        fetch(`${KNOWLEDGE_SVC}/v1/knowledge/search?q=*&limit=10`, { signal: AbortSignal.timeout(3000) }),
+        fetch(`${KNOWLEDGE_SVC}/v1/insights`, { signal: AbortSignal.timeout(3000) }),
+      ]);
+      if (kbStatusRes.ok) {
+        const kbData = await kbStatusRes.json() as Record<string, unknown>;
+        knowledgeStats = {
+          totalEntries: kbData.totalEntries as number ?? 0,
+          topics: kbData.topics as number ?? 0,
+          lastUpdated: kbData.lastUpdated as string ?? null,
+        };
+      }
+      if (kbSearchRes.ok) {
+        recentKnowledge = (await kbSearchRes.json() as Array<Record<string, unknown>>).slice(0, 10);
+      }
+      if (insightsRes.ok) {
+        recentInsights = (await insightsRes.json() as Array<Record<string, unknown>>).slice(0, 10);
+      }
+    } catch {}
+
+    // Derive workflow pipeline stats from missions
+    const pipelineStats = {
+      preK: filtered.filter((m) => m.status === "PLANNED").length,
+      dispatched: filtered.filter((m) => m.status === "RUNNING" && !(m as Record<string, unknown>).startedAt).length,
+      executing: filtered.filter((m) => m.status === "RUNNING").length,
+      postK: 0,
+      review: filtered.filter((m) => m.status === "REVIEW" || m.status === "PENDING_REVIEW").length,
+      completed: completedMissions,
+      failed: failedMissions,
+    };
+
+    return c.json({
+      stats: {
+        activeMissions,
+        completedMissions,
+        failedMissions,
+        totalMissions: filtered.length,
+        runningSessions,
+        staleSessions,
+        totalSessions: allSessions.length,
+        knowledgeEntries: knowledgeStats.totalEntries,
+        knowledgeTopics: knowledgeStats.topics,
+        knowledgeLastUpdated: knowledgeStats.lastUpdated,
+      },
+      recentMissions: filtered.slice(-10).reverse(),
+      activeSessions: allSessions.filter((s) => s.state !== "CLOSED"),
+      recentKnowledge,
+      recentInsights,
+      pipelineStats,
+    });
   } catch (err) {
-    return c.json({ error: "Orchestrator unavailable" }, 502);
+    return c.json(safeError("Dashboard data unavailable", err), 502);
   }
 });
 
 // Proxy /sessions/* to runtime-manager
 rest.all("/sessions/*", async (c) => {
+  const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
   const path = c.req.path.replace("/v1", "");
   try {
-    return await proxyRequest(c, `${RUNTIME_URL}${path}`);
+    const res = await fetch(`${RUNTIME_URL}${path}`);
+    return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json" } });
   } catch (err) {
     return c.json({ error: "Runtime manager unavailable" }, 502);
   }
 });
 
-// Proxy /approvals/* to review-service
-rest.all("/approvals/*", async (c) => {
-  const path = c.req.path.replace("/v1", "");
-  try {
-    return await proxyRequest(c, `${REVIEW_URL}${path}`);
-  } catch (err) {
-    return c.json({ error: "Review service unavailable" }, 502);
-  }
-});
-
+// Proxy /approvals to review-service directly via DB
 rest.get("/approvals", async (c) => {
+  const REVIEW_URL = process.env.REVIEW_SERVICE_URL || "http://review-service:4006";
+  // For now, query the mission-service DB (approvals table is shared)
+  const MISSION_URL = process.env.MISSION_SERVICE_URL || "http://mission-service:4001";
   try {
-    const res = await fetch(`${REVIEW_URL}/approvals`);
+    // Use a direct DB query via a new review-service endpoint
+    const res = await fetch(`${REVIEW_URL}/approvals`, { signal: AbortSignal.timeout(5000) });
     if (res.ok) return new Response(await res.text(), { headers: { "Content-Type": "application/json" } });
-    return c.json([]);
-  } catch {
-    return c.json([]);
+    return c.json({ error: "Service unavailable" }, 502);
+  } catch (err) {
+    return c.json(safeError("Service unavailable", err), 502);
   }
 });
 
 // Proxy /knowledge/* to knowledge-service
+const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
 rest.all("/knowledge/*", async (c) => {
   const path = c.req.path.replace("/v1", "");
   const qs = c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : "";
+  const url = `${KNOWLEDGE_URL}/v1${path}${qs}`;
+  const init: RequestInit = {
+    method: c.req.method,
+    headers: { "Content-Type": "application/json" },
+  };
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    init.body = await c.req.text();
+  }
   try {
-    return await proxyRequest(c, `${KNOWLEDGE_URL}/v1${path}${qs}`);
+    const res = await fetch(url, init);
+    return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json" } });
   } catch (err) {
-    return c.json({ error: "Knowledge service unavailable", detail: String(err) }, 502);
+    return c.json(safeError("Knowledge service unavailable", err), 502);
   }
 });
 
 // Health aggregation
 rest.get("/health/all", async (c) => {
   const services = [
-    { name: "orchestrator", url: ORCHESTRATOR_URL },
-    { name: "runtime-manager", url: RUNTIME_URL },
-    { name: "review-service", url: REVIEW_URL },
-    { name: "knowledge-service", url: KNOWLEDGE_URL },
+    { name: "mission-service", url: MISSION_SERVICE_URL },
+    { name: "runtime-manager", url: process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002" },
+    { name: "review-service", url: process.env.REVIEW_SERVICE_URL || "http://review-service:4006" },
+    { name: "knowledge-service", url: process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007" },
   ];
 
-  const results: Record<string, string> = {};
-  await Promise.all(
+  const results = await Promise.all(
     services.map(async (svc) => {
       try {
         const res = await fetch(`${svc.url}/health`, { signal: AbortSignal.timeout(3000) });
-        results[svc.name] = res.ok ? "ok" : "error";
+        return { name: svc.name, status: res.ok ? "ok" as const : "error" as const };
       } catch {
-        results[svc.name] = "unreachable";
+        return { name: svc.name, status: "unreachable" as const };
       }
     }),
   );
 
-  return c.json(results);
+  const serviceStatuses: Record<string, string> = {};
+  for (const r of results) serviceStatuses[r.name] = r.status;
+
+  const allOk = results.every((r) => r.status === "ok");
+  const allDown = results.every((r) => r.status !== "ok");
+  const overall = allOk ? "ok" : allDown ? "down" : "degraded";
+
+  return c.json({ status: overall, services: serviceStatuses });
 });
 
 export { rest as restRoutes };

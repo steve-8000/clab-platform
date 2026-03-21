@@ -1,9 +1,6 @@
 import { Hono } from "hono";
-import { LocalKnowledgeStore } from "@clab/knowledge";
 import type { KnowledgeEntry } from "@clab/knowledge";
-
-const STORE_DIR = process.env.KNOWLEDGE_STORE_DIR ?? ".knowledge-data";
-const store = new LocalKnowledgeStore(STORE_DIR);
+import { store } from "../store.js";
 
 const knowledge = new Hono();
 

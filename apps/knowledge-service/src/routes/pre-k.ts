@@ -1,11 +1,8 @@
 import { Hono } from "hono";
-import { LocalKnowledgeStore } from "@clab/knowledge";
+import { store } from "../store.js";
 import { extractKeywords } from "../services/keyword-extractor.js";
 import { searchDocs } from "../services/doc-searcher.js";
 import type { SearchResult } from "../services/doc-searcher.js";
-
-const STORE_DIR = process.env.KNOWLEDGE_STORE_DIR ?? ".knowledge-data";
-const store = new LocalKnowledgeStore(STORE_DIR);
 
 export interface PreKnowledgeResult {
   keywords: string[];

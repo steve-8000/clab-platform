@@ -1,19 +1,7 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
-import { LocalKnowledgeStore } from "@clab/knowledge";
-import { EventBus } from "@clab/events";
+import { store, bus, ensureBus } from "../store.js";
 import { extractKeywords } from "../services/keyword-extractor.js";
-
-const STORE_DIR = process.env.KNOWLEDGE_STORE_DIR ?? ".knowledge-data";
-const store = new LocalKnowledgeStore(STORE_DIR);
-const bus = new EventBus();
-
-let busConnected = false;
-async function ensureBus(): Promise<void> {
-  if (busConnected) return;
-  await bus.connect();
-  busConnected = true;
-}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -153,8 +141,11 @@ insights.post("/extract", async (c) => {
             types: extracted.map((i) => i.type),
           },
         });
-      } catch {
-        // Event emission failure is non-fatal
+      } catch (pubErr) {
+        console.warn(
+          `[knowledge-service] Failed to publish knowledge.extracted event for taskRun=${body.taskRunId}:`,
+          pubErr,
+        );
       }
     }
 

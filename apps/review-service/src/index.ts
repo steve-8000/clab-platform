@@ -1,48 +1,65 @@
 import { serve } from "@hono/node-server";
-import { app, reviewTask } from "./app.js";
-import { EventBus, createEvent } from "@clab/events";
-import type { EventEnvelope } from "@clab/events";
+import { app, reviewTask, sql, bus } from "./app.js";
+import { createLogger } from "@clab/telemetry";
+import { createEvent, type EventEnvelope } from "@clab/events";
 
+const logger = createLogger("review-service");
 const port = Number(process.env.PORT) || 4006;
 const NATS_URL = process.env.NATS_URL || "nats://nats:4222";
 
-async function startEventSubscriber() {
-  const eventBus = new EventBus();
+async function startEventBus() {
   try {
-    await eventBus.connect(NATS_URL);
-    console.log("[review-service] EventBus connected");
+    await bus.connect(NATS_URL);
+    logger.info("EventBus connected");
 
-    // Subscribe to task.run.completed — auto-review
-    await eventBus.subscribe("task.run.completed", async (event: EventEnvelope) => {
+    await bus.subscribe("*.task.completed", async (event) => {
       try {
-        const taskId = event.taskId ?? (event.payload.taskId as string);
-        if (!taskId) return;
+        const data = event.payload as Record<string, unknown>;
+        const taskId = (data.taskId ?? event.payload?.taskId) as string;
+        logger.info("Reviewing task from EventBus", { taskId });
 
-        console.log(`[review-service] Reviewing task: ${taskId}`);
         const result = await reviewTask(taskId);
 
-        // Publish review result event
-        const eventType = result.passed ? "task.review_passed" : "task.review_failed";
-        await eventBus.publish(createEvent(eventType, {
-          reviewedBy: "review-service",
-          ...(result.passed
-            ? { comments: `Passed (${result.artifactCount} artifacts)` }
-            : { reason: result.issues.join("; "), comments: result.issues.join("; ") }),
-        }, {
+        await bus.publish(createEvent("review.completed", {
           taskId,
           missionId: result.missionId,
-          actor: { kind: "system", id: "review-service" },
-        }));
+          passed: result.passed,
+          issues: result.issues,
+        }, { actor: { kind: "system", id: "review-service" } }));
       } catch (err) {
-        console.error("[review-service] Error reviewing task:", err);
+        logger.error("Error reviewing task", { error: err instanceof Error ? err.message : String(err) });
       }
     });
   } catch (err) {
-    console.error("[review-service] EventBus connection failed, running HTTP-only mode:", err);
+    logger.warn("EventBus connection failed, running HTTP-only mode", { error: err instanceof Error ? err.message : String(err) });
   }
 }
 
-serve({ fetch: app.fetch, port }, () => {
-  console.log(`Review-Service listening on port ${port}`);
-  startEventSubscriber();
+const server = serve({ fetch: app.fetch, port }, () => {
+  logger.info("Review-Service listening", { port });
+  startEventBus();
 });
+
+// Graceful shutdown
+async function shutdown(signal: string) {
+  logger.info("Shutting down", { signal });
+  try {
+    await bus.close();
+    logger.info("EventBus drained");
+  } catch (err) {
+    logger.error("EventBus drain failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+  try {
+    await sql.end();
+    logger.info("DB connection closed");
+  } catch (err) {
+    logger.error("DB close failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+  server.close(() => {
+    logger.info("HTTP server closed");
+    process.exit(0);
+  });
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));

@@ -1,17 +1,32 @@
 import { Hono } from "hono";
 import { CmuxSocketClient } from "@clab/cmux-adapter";
 import { EventBus } from "@clab/events";
+import { createLogger } from "@clab/telemetry";
 import { BrowserController } from "../services/browser-controller.js";
 
-const cmux = new CmuxSocketClient();
-const bus = new EventBus();
+const logger = createLogger("browser-service");
+
+export const cmux = new CmuxSocketClient();
+export const bus = new EventBus();
 const controller = new BrowserController(cmux, bus);
 
 let initialized = false;
 async function ensureInit(): Promise<void> {
   if (initialized) return;
-  await cmux.connect();
-  await bus.connect();
+  try {
+    await cmux.connect();
+    logger.info("Cmux client connected");
+  } catch (err) {
+    logger.error("Cmux client connection failed", { error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
+  try {
+    await bus.connect();
+    logger.info("EventBus connected");
+  } catch (err) {
+    logger.error("EventBus connection failed", { error: err instanceof Error ? err.message : String(err) });
+    throw err;
+  }
   initialized = true;
 }
 

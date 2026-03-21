@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { db, logger, publishEvent } from "../deps.js";
 import { missions, plans, waves, tasks } from "@clab/db";
-import { eq } from "drizzle-orm";
+import { eq, and, notInArray } from "drizzle-orm";
 import {
   MISSION_TRANSITIONS,
   WAVE_TRANSITIONS,
@@ -21,13 +21,13 @@ function routeRole(text: string): string {
   if (/\b(test|spec|coverage|unit test|e2e)\b/.test(lower)) return "BUILDER";
   if (/\b(design|architect|structure|interface|schema)\b/.test(lower)) return "ARCHITECT";
   if (/\b(research|analyze|investigate|study|compare)\b/.test(lower)) return "RESEARCH_ANALYST";
-  if (/\b(review|verify|qa|check|audit)\b/.test(lower)) return "REVIEWER";
+  if (/\b(review|verify|qa|check|audit)\b/.test(lower)) return "OPERATIONS_REVIEWER";
   if (/\b(plan|decompose|prioritize|breakdown|roadmap)\b/.test(lower)) return "PM";
   return "BUILDER";
 }
 
 function routeEngine(role: string): string {
-  return role === "REVIEWER" || role === "PM" ? "CLAUDE" : "CODEX";
+  return role === "OPERATIONS_REVIEWER" || role === "PM" ? "CLAUDE" : "CODEX";
 }
 
 interface TaskSpec {
@@ -117,6 +117,13 @@ missionRoutes.post("/", async (c) => {
     }).returning();
     allWaves.push(wave);
 
+    // Publish wave.created event
+    await publishEvent("wave.created", {
+      ordinal: wave.ordinal,
+      label: wave.label,
+      status: wave.status,
+    }, { missionId: mission.id, waveId: wave.id, workspaceId });
+
     const waveTasks = taskSpecs.slice(w * tasksPerWave, (w + 1) * tasksPerWave);
     for (const spec of waveTasks) {
       // Pre-K enrichment
@@ -135,7 +142,7 @@ missionRoutes.post("/", async (c) => {
             enrichedDesc = `${spec.description}\n\n## Prior Knowledge\n${context}`;
           }
         }
-      } catch {}
+      } catch (err) { logger.warn("Pre-K enrichment failed", { error: String(err) }); }
 
       const [task] = await db.insert(tasks).values({
         waveId: wave.id,
@@ -196,8 +203,20 @@ missionRoutes.post("/:id/start", async (c) => {
     assertTransition(WAVE_TRANSITIONS, firstWave.status as "PENDING", "READY");
     await db.update(waves).set({ status: "READY" }).where(eq(waves.id, firstWave.id));
 
+    // Publish wave.ready event
+    await publishEvent("wave.ready", {
+      ordinal: firstWave.ordinal,
+      label: firstWave.label,
+    }, { missionId: id, waveId: firstWave.id, workspaceId: missionData.workspaceId });
+
     assertTransition(WAVE_TRANSITIONS, "READY" as const, "RUNNING");
     await db.update(waves).set({ status: "RUNNING", startedAt: new Date() }).where(eq(waves.id, firstWave.id));
+
+    // Publish wave.started event
+    await publishEvent("wave.started", {
+      ordinal: firstWave.ordinal,
+      startedAt: new Date().toISOString(),
+    }, { missionId: id, waveId: firstWave.id, workspaceId: missionData.workspaceId });
 
     // 3. Assign tasks in the first wave (with policy evaluation)
     const waveTasks = await db.select().from(tasks).where(eq(tasks.waveId, firstWave.id));
@@ -339,4 +358,54 @@ missionRoutes.post("/:missionId/tasks/:taskId/unblock", async (c) => {
   logger.info("Task unblocked after approval", { taskId, missionId });
 
   return c.json({ status: "ASSIGNED", taskId, missionId });
+});
+
+// POST /:id/abort — Abort a mission
+missionRoutes.post("/:id/abort", async (c) => {
+  const id = c.req.param("id");
+
+  const [mission] = await db.select().from(missions).where(eq(missions.id, id));
+  if (!mission) return c.json({ error: "Mission not found" }, 404);
+
+  // Validate state transition to ABORTED
+  assertTransition(MISSION_TRANSITIONS, mission.status as any, "ABORTED");
+  await db.update(missions).set({ status: "ABORTED", updatedAt: new Date() }).where(eq(missions.id, id));
+
+  // Cancel all non-terminal tasks
+  const terminalTaskStatuses = ["SUCCEEDED", "FAILED", "CANCELLED"];
+  const missionTasks = await db.select().from(tasks).where(
+    and(eq(tasks.missionId, id), notInArray(tasks.status, terminalTaskStatuses)),
+  );
+  for (const task of missionTasks) {
+    assertTransition(TASK_TRANSITIONS, task.status as any, "CANCELLED");
+    await db.update(tasks).set({ status: "CANCELLED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
+  }
+
+  // Fail all non-terminal waves
+  const terminalWaveStatuses = ["COMPLETED", "FAILED"];
+  const missionWaves = await db.select().from(waves).where(
+    and(eq(waves.missionId, id), notInArray(waves.status, terminalWaveStatuses)),
+  );
+  for (const wave of missionWaves) {
+    assertTransition(WAVE_TRANSITIONS, wave.status as any, "FAILED");
+    await db.update(waves).set({ status: "FAILED" }).where(eq(waves.id, wave.id));
+  }
+
+  // Publish mission.failed event
+  await publishEvent("mission.failed", {
+    reason: "Mission aborted",
+    abortedAt: new Date().toISOString(),
+  }, { missionId: id, workspaceId: mission.workspaceId });
+
+  logger.info("Mission aborted", {
+    missionId: id,
+    cancelledTasks: missionTasks.length,
+    failedWaves: missionWaves.length,
+  });
+
+  return c.json({
+    status: "ABORTED",
+    cancelledTasks: missionTasks.length,
+    failedWaves: missionWaves.length,
+  });
 });

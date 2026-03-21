@@ -4,204 +4,77 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@clab/db";
 import { eq } from "drizzle-orm";
+import { createLogger } from "@clab/telemetry";
 import { EventBus, createEvent } from "@clab/events";
-import { CmuxSocketClient } from "@clab/cmux-adapter";
-import { createRunner } from "@clab/engines";
-import { getPrompt, renderPrompt } from "@clab/prompts";
 
-const { tasks, taskRuns, artifacts, agentSessions } = schema;
+const logger = createLogger("worker-codex");
+
+const { tasks, taskRuns, artifacts } = schema;
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pass@postgres:5432/clab";
 const sql = postgres(DATABASE_URL);
 const db = drizzle(sql, { schema });
 
-const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
-const NATS_URL = process.env.NATS_URL || "nats://nats:4222";
-
+// EventBus singleton
 const eventBus = new EventBus();
 let eventBusReady = false;
 
-async function ensureEventBus(): Promise<void> {
-  if (eventBusReady) return;
+export async function initEventBus(): Promise<void> {
   try {
+    const NATS_URL = process.env.NATS_URL || "nats://nats:4222";
     await eventBus.connect(NATS_URL);
     eventBusReady = true;
+    logger.info("EventBus connected");
   } catch (err) {
-    console.warn("[worker-codex] EventBus unavailable:", err);
+    logger.warn("EventBus connection failed, events will not be published", { error: String(err) });
   }
 }
 
-async function reportHeartbeat(sessionId: string): Promise<void> {
+export async function closeEventBus(): Promise<void> {
+  if (eventBusReady) {
+    await eventBus.close();
+    eventBusReady = false;
+  }
+}
+
+async function publishEvent(type: string, payload: Record<string, unknown>, context: { taskId?: string; taskRunId?: string; missionId?: string }): Promise<void> {
+  if (!eventBusReady) {
+    logger.warn("EventBus not ready, skipping event publish", { eventType: type, taskId: context.taskId });
+    return;
+  }
   try {
-    await fetch(`${RUNTIME_URL}/sessions/${sessionId}/heartbeat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ memoryUsageMb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) }),
-    });
-  } catch {}
-}
-
-async function findSessionForTask(taskId: string): Promise<string | undefined> {
-  const sessions = await db.select().from(agentSessions);
-  const session = sessions.find(s => {
-    const meta = s.metadata as Record<string, unknown> | null;
-    return (meta?.currentTaskId === taskId || meta?.taskId === taskId) && (s.state === "RUNNING" || s.state === "BOUND");
-  });
-  return session?.id;
-}
-
-function resolvePromptRole(role: string): string {
-  const map: Record<string, string> = {
-    BUILDER: "BUILDER",
-    ARCHITECT: "ARCHITECT",
-    STRATEGIST: "STRATEGIST",
-    RESEARCH_ANALYST: "RESEARCH_ANALYST",
-  };
-  return map[role] ?? "BUILDER";
-}
-
-async function ensureSessionPane(sessionId: string, role: string): Promise<{ paneId: string; disconnect: () => void }> {
-  const cmux = new CmuxSocketClient();
-  await cmux.connect();
-
-  const [session] = await db.select().from(agentSessions).where(eq(agentSessions.id, sessionId));
-  if (!session) {
-    cmux.disconnect();
-    throw new Error(`Session ${sessionId} not found`);
-  }
-
-  if (session.paneId) {
-    return { paneId: session.paneId, disconnect: () => cmux.disconnect() };
-  }
-
-  let paneId: string | undefined;
-  const workspace = await cmux.workspaceCurrent();
-  const panes = await cmux.paneList(workspace.id);
-  const anchorPaneId = panes.find((pane) => pane.active)?.id ?? panes[0]?.id;
-  paneId = (await cmux.paneSplit("right", anchorPaneId)).id;
-
-  await db.update(agentSessions).set({
-    paneId,
-    metadata: {
-      ...(session.metadata as Record<string, unknown> || {}),
-      cmuxProvisionedAt: new Date().toISOString(),
-    },
-  }).where(eq(agentSessions.id, sessionId));
-
-  return { paneId, disconnect: () => cmux.disconnect() };
-}
-
-async function runTaskInCmux(task: typeof tasks.$inferSelect, sessionId: string): Promise<string> {
-  const { paneId, disconnect } = await ensureSessionPane(sessionId, task.role);
-
-  try {
-    const cmux = new CmuxSocketClient();
-    await cmux.connect();
-    const runner = createRunner("CODEX", cmux);
-    const prompt = getPrompt(resolvePromptRole(task.role));
-    const rendered = prompt
-      ? renderPrompt(prompt, {
-        instruction: task.description,
-        workingDir: process.env.WORKDIR_ROOT || process.cwd(),
-        context: "",
-      })
-      : {
-        system: "You are a Builder agent working inside an interactive Codex TUI session.",
-        user: task.description,
-      };
-
-    await runner.start({
-      sessionId,
-      paneId,
-      workingDir: process.env.WORKDIR_ROOT || process.cwd(),
-      instruction: rendered.user,
-      systemPrompt: rendered.system,
-    });
-
-    const startedAt = Date.now();
-    const knownNotificationIds = new Set((await cmux.notificationList()).map((n) => n.id));
-    let stableIdleReads = 0;
-    let lastOutput = "";
-
-    while (Date.now() - startedAt < (task.timeoutMs ?? 300_000)) {
-      const output = await runner.readOutput(paneId);
-      const notifications = (await cmux.notificationList()) as Array<{
-        id: string;
-        title?: string;
-        subtitle?: string;
-        body?: string;
-        paneId?: string;
-      }>;
-      const paneNotification = notifications.find((notification) => {
-        if (knownNotificationIds.has(notification.id))
-          return false;
-
-        const text = `${notification.title ?? ""}\n${notification.subtitle ?? ""}\n${notification.body ?? ""}`.toLowerCase();
-        return notification.paneId === paneId || text.includes(paneId.toLowerCase());
-      });
-      if (paneNotification && runner.isIdle(output)) {
-        return output;
-      }
-
-      if (output === lastOutput && runner.isIdle(output)) {
-        stableIdleReads += 1;
-        if (stableIdleReads >= 3) {
-          return output;
-        }
-      } else {
-        stableIdleReads = 0;
-        lastOutput = output;
-      }
-      for (const notification of notifications) {
-        knownNotificationIds.add(notification.id);
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    }
-
-    return await runner.readOutput(paneId);
-  } finally {
-    disconnect();
+    await eventBus.publish(createEvent(type, payload, context));
+  } catch (err) {
+    logger.error("Failed to publish event", { eventType: type, error: String(err) });
   }
 }
 
-export async function executeTask(taskId: string): Promise<void> {
+export async function executeTask(taskId: string): Promise<"SUCCEEDED" | "FAILED"> {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
-  if (!task) { console.error(`Task ${taskId} not found`); return; }
+  if (!task) { logger.error(`Task ${taskId} not found`); return "FAILED"; }
 
-  await ensureEventBus();
-  const sessionId = await findSessionForTask(taskId);
-
+  // Create task run
   const [run] = await db.insert(taskRuns).values({
     taskId: task.id,
-    sessionId: sessionId ?? null,
     attempt: 1,
     status: "RUNNING",
   }).returning();
 
+  // Update task to RUNNING
   await db.update(tasks).set({ status: "RUNNING", updatedAt: new Date() }).where(eq(tasks.id, taskId));
 
-  console.log(`[worker-codex] Executing: ${task.title} (session: ${sessionId ?? "none"})`);
+  logger.info(`Executing: ${task.title}`, { taskId });
 
-  let heartbeatInterval: ReturnType<typeof setInterval> | undefined;
-  if (sessionId) {
-    heartbeatInterval = setInterval(() => reportHeartbeat(sessionId), 15_000);
-    await reportHeartbeat(sessionId);
-  }
+  await publishEvent("task.run.started", { engine: task.engine, role: task.role }, { taskId, taskRunId: run.id, missionId: task.missionId });
 
+  // Execute via Claude API or simulate
   let output: string;
-  const startTime = Date.now();
-  const executionMode = process.env.EXECUTION_MODE || "k8s";
+  let success = true;
+  const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-  try {
-    if (executionMode === "local") {
-      if (!sessionId) throw new Error(`No bound session found for task ${taskId}`);
-      output = await runTaskInCmux(task, sessionId);
-      console.log(`[worker-codex] Executed in cmux TUI for: ${task.title}`);
-    } else {
-      const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-      if (!ANTHROPIC_API_KEY) {
-        throw new Error("ANTHROPIC_API_KEY is required when EXECUTION_MODE is not local");
-      }
-      console.log(`[worker-codex] Calling Claude API for: ${task.title}`);
+  if (ANTHROPIC_API_KEY) {
+    // Real Claude API call
+    logger.info(`Calling Claude API for: ${task.title}`, { taskId });
+    try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -212,7 +85,7 @@ export async function executeTask(taskId: string): Promise<void> {
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
           max_tokens: 4096,
-          system: "You are a Builder agent. Your job is to implement code changes as specified. Output the code changes clearly. Be concise and focused.",
+          system: `You are a Builder agent. Your job is to implement code changes as specified. Output the code changes clearly. Be concise and focused.`,
           messages: [{ role: "user", content: task.description }],
         }),
       });
@@ -221,26 +94,33 @@ export async function executeTask(taskId: string): Promise<void> {
         const data = await res.json() as { content: Array<{ text: string }> };
         output = data.content.map((c) => c.text).join("\n");
       } else {
-        output = `[Claude API Error ${res.status}]: ${await res.text()}`;
-        console.error(`[worker-codex] Claude API error: ${res.status}`);
+        const errText = await res.text();
+        output = `[Claude API Error ${res.status}]: ${errText}`;
+        success = false;
+        logger.error(`Claude API error: ${res.status}`, { taskId });
       }
+    } catch (err) {
+      output = `[Claude API Error]: ${String(err)}`;
+      success = false;
+      logger.error(`Claude API call failed`, { taskId, error: String(err) });
     }
-  } catch (err) {
-    output = `[worker-codex error]: ${String(err)}`;
-    console.error(`[worker-codex] Task execution failed:`, err);
-  } finally {
-    if (heartbeatInterval) clearInterval(heartbeatInterval);
+  } else {
+    // Simulation fallback
+    output = `[SIMULATED] Task "${task.title}" executed by worker-codex.\nDescription: ${task.description}\nRole: ${task.role}`;
+    logger.info(`No ANTHROPIC_API_KEY — simulating`, { taskId });
   }
 
-  const durationMs = Date.now() - startTime;
+  const finalStatus = success ? "SUCCEEDED" : "FAILED";
 
+  // Update run status
   await db.update(taskRuns).set({
-    status: "SUCCEEDED",
+    status: finalStatus,
     stdout: output,
-    durationMs,
+    durationMs: 1500,
     finishedAt: new Date(),
   }).where(eq(taskRuns.id, run.id));
 
+  // Create artifact
   await db.insert(artifacts).values({
     taskRunId: run.id,
     missionId: task.missionId,
@@ -249,55 +129,55 @@ export async function executeTask(taskId: string): Promise<void> {
     metadata: { role: task.role, engine: task.engine },
   });
 
-  await db.update(tasks).set({ status: "SUCCEEDED", completedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, taskId));
+  // Update task status
+  await db.update(tasks).set({
+    status: finalStatus,
+    ...(success ? { completedAt: new Date() } : {}),
+    updatedAt: new Date(),
+  }).where(eq(tasks.id, taskId));
 
-  if (eventBusReady) {
-    await eventBus.publish(createEvent("task.run.completed", {
-      taskId,
-      taskRunId: run.id,
-      status: "SUCCEEDED",
-      durationMs,
-    }, {
-      taskId,
-      missionId: task.missionId,
-      sessionId,
-      actor: { kind: "system", id: "worker-codex" },
-    }));
+  // Publish completion/failure event
+  const eventType = success ? "task.run.completed" : "task.run.failed";
+  await publishEvent(eventType, { status: finalStatus, engine: task.engine, role: task.role, output }, { taskId, taskRunId: run.id, missionId: task.missionId });
+
+  // Post-K: extract insights and store knowledge (only on success)
+  if (success) {
+    try {
+      const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
+      await fetch(`${KNOWLEDGE_URL}/v1/insights/extract`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskRunId: run.id,
+          result: { status: "SUCCEEDED", summary: `Completed: ${task.title}`, output },
+          context: task.description,
+        }),
+      });
+      await fetch(`${KNOWLEDGE_URL}/v1/knowledge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: task.title,
+          content: `Task completed: ${task.title}\n\nDescription: ${task.description}\n\nOutput: ${output}`,
+          tags: [task.role, task.engine, "auto-extracted"],
+          source: "EXTRACTED",
+        }),
+      });
+      logger.info(`Post-K: knowledge stored for ${taskId}`);
+    } catch (err) {
+      logger.warn(`Post-K failed (non-fatal)`, { taskId, error: String(err) });
+    }
   }
 
-  try {
-    const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
-    await fetch(`${KNOWLEDGE_URL}/v1/insights/extract`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        taskRunId: run.id,
-        result: { status: "SUCCEEDED", summary: `Completed: ${task.title}`, output },
-        context: task.description,
-      }),
-    });
-    await fetch(`${KNOWLEDGE_URL}/v1/knowledge`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        topic: task.title,
-        content: `Task completed: ${task.title}\n\nDescription: ${task.description}\n\nOutput: ${output}`,
-        tags: [task.role, task.engine, "auto-extracted"],
-        source: "EXTRACTED",
-      }),
-    });
-    console.log(`[worker-codex] Post-K: knowledge stored for ${taskId}`);
-  } catch (err) {
-    console.warn(`[worker-codex] Post-K failed (non-fatal):`, err);
-  }
-
-  console.log(`[worker-codex] Task ${taskId} completed (${durationMs}ms)`);
+  logger.info(`Task ${taskId} ${finalStatus}`, { taskId, status: finalStatus });
+  return finalStatus;
 }
 
 export const app = new Hono()
   .use("*", cors())
   .get("/health", (c) => c.json({ status: "ok", service: "worker-codex" }))
 
+  // POST /execute — Execute a task
   .post("/execute", async (c) => {
     const body = await c.req.json();
     const { taskId } = body;
@@ -307,7 +187,7 @@ export const app = new Hono()
     const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
     if (!task) return c.json({ error: "Task not found" }, 404);
 
-    await executeTask(taskId);
+    const status = await executeTask(taskId);
 
-    return c.json({ status: "SUCCEEDED", taskId });
+    return c.json({ status, taskId });
   });

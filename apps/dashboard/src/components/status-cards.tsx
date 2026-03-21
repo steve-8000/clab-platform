@@ -1,13 +1,13 @@
-import { DashboardData } from "@/lib/api";
+import type { DashboardStats } from "@/types";
 
-export function StatusCards({ stats }: { stats: DashboardData["stats"] }) {
+export function StatusCards({ stats }: { stats: DashboardStats }) {
   const cards = [
-    { label: "Active Missions", value: stats.activeMissions, color: "text-blue-400", icon: "▶" },
-    { label: "Completed", value: stats.completedMissions, color: "text-green-400", icon: "✓" },
-    { label: "Failed", value: stats.failedMissions, color: "text-red-400", icon: "✗" },
-    { label: "Running Sessions", value: stats.runningSessions, color: "text-cyan-400", icon: "◉" },
-    { label: "Knowledge Entries", value: stats.knowledgeEntries, color: "text-purple-400", icon: "◆" },
-    { label: "Knowledge Topics", value: stats.knowledgeTopics, color: "text-indigo-400", icon: "◇" },
+    { label: "Active Missions", value: stats.activeMissions, color: "text-blue-400", icon: "\u25B6" },
+    { label: "Completed", value: stats.completedMissions, color: "text-green-400", icon: "\u2713" },
+    { label: "Failed", value: stats.failedMissions, color: "text-red-400", icon: "\u2717" },
+    { label: "Running Sessions", value: stats.runningSessions, color: "text-cyan-400", icon: "\u25C9" },
+    { label: "Knowledge Entries", value: stats.knowledgeEntries, color: "text-purple-400", icon: "\u25C6" },
+    { label: "Knowledge Topics", value: stats.knowledgeTopics, color: "text-indigo-400", icon: "\u25C7" },
   ];
 
   return (

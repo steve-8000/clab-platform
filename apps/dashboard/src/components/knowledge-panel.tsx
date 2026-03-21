@@ -1,4 +1,4 @@
-import { KnowledgeEntry, InsightEntry } from "@/lib/api";
+import type { KnowledgeEntry, Insight } from "@/types";
 
 const SOURCE_COLORS: Record<string, string> = {
   MANUAL: "bg-blue-900 text-blue-300",
@@ -49,7 +49,7 @@ function KnowledgeEntryCard({ entry }: { entry: KnowledgeEntry }) {
   );
 }
 
-function InsightCard({ insight }: { insight: InsightEntry }) {
+function InsightCard({ insight }: { insight: Insight }) {
   return (
     <div className="p-3 bg-gray-800 rounded-lg border-l-2 border-amber-600">
       <p className="text-sm font-medium text-amber-300 mb-1">{insight.topic}</p>
@@ -72,7 +72,7 @@ export function KnowledgePanel({
   stats,
 }: {
   entries: KnowledgeEntry[];
-  insights: InsightEntry[];
+  insights: Insight[];
   stats: { knowledgeEntries: number; knowledgeTopics: number; knowledgeLastUpdated: string | null };
 }) {
   return (
@@ -82,7 +82,7 @@ export function KnowledgePanel({
           <h2 className="text-lg font-semibold">Agentic Knowledge Base</h2>
           <p className="text-xs text-gray-500 mt-0.5">
             {stats.knowledgeEntries} entries across {stats.knowledgeTopics} topics
-            {stats.knowledgeLastUpdated && ` · updated ${timeAgo(stats.knowledgeLastUpdated)}`}
+            {stats.knowledgeLastUpdated && ` \u00B7 updated ${timeAgo(stats.knowledgeLastUpdated)}`}
           </p>
         </div>
         <div className="flex items-center gap-1.5">
@@ -92,10 +92,9 @@ export function KnowledgePanel({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Recent Knowledge */}
         <div>
           <h3 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-2">
-            <span className="text-purple-400">◆</span> Recent Knowledge
+            <span className="text-purple-400">{"\u25C6"}</span> Recent Knowledge
           </h3>
           {entries.length === 0 ? (
             <p className="text-gray-600 text-sm p-3 bg-gray-800 rounded-lg">No knowledge entries yet</p>
@@ -108,10 +107,9 @@ export function KnowledgePanel({
           )}
         </div>
 
-        {/* Insights */}
         <div>
           <h3 className="text-sm font-medium text-gray-400 mb-3 flex items-center gap-2">
-            <span className="text-amber-400">◇</span> Extracted Insights
+            <span className="text-amber-400">{"\u25C7"}</span> Extracted Insights
           </h3>
           {insights.length === 0 ? (
             <p className="text-gray-600 text-sm p-3 bg-gray-800 rounded-lg">No insights extracted yet</p>

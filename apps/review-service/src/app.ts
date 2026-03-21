@@ -4,18 +4,57 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@clab/db";
 import { eq } from "drizzle-orm";
-import {
-  TASK_TRANSITIONS,
-  WAVE_TRANSITIONS,
-  MISSION_TRANSITIONS,
-  assertTransition,
-  canTransition,
-} from "@clab/domain";
+import { createLogger } from "@clab/telemetry";
+import { EventBus } from "@clab/events";
+
+const logger = createLogger("review-service");
 
 const { tasks, taskRuns, waves, missions, artifacts, approvals } = schema;
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pass@postgres:5432/clab";
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://mission-service:4002";
 const sql = postgres(DATABASE_URL);
 const db = drizzle(sql, { schema });
+export const bus = new EventBus();
+
+/** Retry a function up to maxRetries times with delayMs between attempts. */
+async function withRetry<T>(fn: () => Promise<T>, maxRetries: number, delayMs: number): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+  throw lastError;
+}
+
+/** Notify orchestrator to unblock a task after approval, with retry logic. */
+async function notifyOrchestratorUnblock(missionId: string, taskId: string, approvalId: string): Promise<void> {
+  try {
+    await withRetry(async () => {
+      const res = await fetch(`${ORCHESTRATOR_URL}/v1/missions/${missionId}/tasks/${taskId}/unblock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approvalId }),
+      });
+      if (!res.ok) {
+        throw new Error(`Orchestrator returned ${res.status}: ${res.statusText}`);
+      }
+    }, 3, 1000);
+    logger.info("Orchestrator unblock succeeded", { missionId, taskId, approvalId });
+  } catch (err) {
+    logger.error("Orchestrator unblock failed after 3 retries", {
+      missionId,
+      taskId,
+      approvalId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 // Risk scoring
 function computeRisk(task: Record<string, unknown>, artifactCount: number): { score: number; level: string; reasons: string[] } {
@@ -76,75 +115,30 @@ export async function reviewTask(taskId: string): Promise<{ passed: boolean; iss
       actorId: "review-service",
     }).returning();
     approvalId = approval.id;
-    console.log(`[review] Approval ${approval.id}: ${risk.level} risk — ${risk.level === "HIGH" ? "PENDING manual approval" : "auto-approved"}`);
+    logger.info("Approval created", { approvalId: approval.id, riskLevel: risk.level, status: risk.level === "HIGH" ? "PENDING" : "auto-approved" });
   }
 
-  console.log(`[review] Task ${taskId}: ${passed ? "PASSED" : "FAILED"} (risk: ${risk.level}/${risk.score})`);
+  logger.info("Task reviewed", { taskId, passed, riskLevel: risk.level, riskScore: risk.score });
 
-  // 5. If passed, update task status and check wave completion
+  // 5. If passed, check if wave is complete
   if (passed) {
-    // Task → SUCCEEDED
-    if (canTransition(TASK_TRANSITIONS, task.status as "RUNNING", "SUCCEEDED")) {
-      assertTransition(TASK_TRANSITIONS, task.status as "RUNNING", "SUCCEEDED");
-      await db.update(tasks).set({ status: "SUCCEEDED", completedAt: new Date(), updatedAt: new Date() }).where(eq(tasks.id, taskId));
-    }
-
     const waveTasks = await db.select().from(tasks).where(eq(tasks.waveId, task.waveId));
     const allDone = waveTasks.every(t => t.status === "SUCCEEDED" || t.id === taskId);
 
     if (allDone) {
-      // Wave → COMPLETED
-      const [wave] = await db.select().from(waves).where(eq(waves.id, task.waveId));
-      if (wave && canTransition(WAVE_TRANSITIONS, wave.status as "RUNNING", "COMPLETED")) {
-        assertTransition(WAVE_TRANSITIONS, wave.status as "RUNNING", "COMPLETED");
-        await db.update(waves).set({ status: "COMPLETED", completedAt: new Date() }).where(eq(waves.id, task.waveId));
-        console.log(`[review] Wave ${task.waveId} RUNNING→COMPLETED`);
-      }
+      await db.update(waves).set({ status: "COMPLETED", completedAt: new Date() }).where(eq(waves.id, task.waveId));
+      logger.info("Wave completed", { waveId: task.waveId });
 
-      // Check for next wave or mission completion
       const missionWaves = await db.select().from(waves).where(eq(waves.missionId, task.missionId));
-      const sortedWaves = missionWaves.sort((a, b) => a.ordinal - b.ordinal);
-      const completedWaveIndex = sortedWaves.findIndex(w => w.id === task.waveId);
-      const nextWave = sortedWaves[completedWaveIndex + 1];
+      const allWavesDone = missionWaves.every(w => w.status === "COMPLETED" || w.id === task.waveId);
 
-      if (nextWave && nextWave.status === "PENDING") {
-        // Start next wave cascade: PENDING → READY → RUNNING
-        assertTransition(WAVE_TRANSITIONS, "PENDING", "READY");
-        await db.update(waves).set({ status: "READY" }).where(eq(waves.id, nextWave.id));
-
-        assertTransition(WAVE_TRANSITIONS, "READY", "RUNNING");
-        await db.update(waves).set({ status: "RUNNING", startedAt: new Date() }).where(eq(waves.id, nextWave.id));
-
-        // Assign tasks in the next wave
-        const nextWaveTasks = await db.select().from(tasks).where(eq(tasks.waveId, nextWave.id));
-        for (const nTask of nextWaveTasks) {
-          if (canTransition(TASK_TRANSITIONS, nTask.status as "QUEUED", "ASSIGNED")) {
-            assertTransition(TASK_TRANSITIONS, nTask.status as "QUEUED", "ASSIGNED");
-            await db.update(tasks).set({ status: "ASSIGNED", updatedAt: new Date() }).where(eq(tasks.id, nTask.id));
-          }
-        }
-
-        console.log(`[review] Wave cascade: wave ${nextWave.ordinal} started (${nextWaveTasks.length} tasks)`);
-      } else {
-        // All waves done — check mission completion
-        const allWavesDone = sortedWaves.every(w => w.status === "COMPLETED" || w.id === task.waveId);
-
-        if (allWavesDone) {
-          // Mission RUNNING → REVIEWING → COMPLETED
-          const [mission] = await db.select().from(missions).where(eq(missions.id, task.missionId));
-          if (mission && canTransition(MISSION_TRANSITIONS, mission.status as "RUNNING", "REVIEWING")) {
-            assertTransition(MISSION_TRANSITIONS, mission.status as "RUNNING", "REVIEWING");
-            await db.update(missions).set({ status: "REVIEWING", updatedAt: new Date() }).where(eq(missions.id, task.missionId));
-
-            assertTransition(MISSION_TRANSITIONS, "REVIEWING", "COMPLETED");
-            await db.update(missions).set({
-              status: "COMPLETED",
-              completedAt: new Date(),
-              updatedAt: new Date(),
-            }).where(eq(missions.id, task.missionId));
-            console.log(`[review] Mission ${task.missionId} RUNNING→REVIEWING→COMPLETED`);
-          }
-        }
+      if (allWavesDone) {
+        await db.update(missions).set({
+          status: "COMPLETED",
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(missions.id, task.missionId));
+        logger.info("Mission completed", { missionId: task.missionId });
       }
     }
   }
@@ -152,9 +146,29 @@ export async function reviewTask(taskId: string): Promise<{ passed: boolean; iss
   return { passed, issues, artifactCount: taskArtifacts.length, missionId: task.missionId, risk, approvalRequired, approvalId };
 }
 
+export { sql, db };
+
 export const app = new Hono()
   .use("*", cors())
-  .get("/health", (c) => c.json({ status: "ok", service: "review-service" }))
+  .get("/health", async (c) => {
+    const checks: Record<string, string> = { service: "review-service" };
+    let healthy = true;
+
+    // Check DB connectivity
+    try {
+      await sql`SELECT 1`;
+      checks.db = "ok";
+    } catch {
+      checks.db = "error";
+      healthy = false;
+    }
+
+    // Check EventBus connectivity
+    checks.eventBus = bus["nc"] ? "ok" : "disconnected";
+    if (!bus["nc"]) healthy = false;
+
+    return c.json({ status: healthy ? "ok" : "degraded", ...checks }, healthy ? 200 : 503);
+  })
 
   // POST /review — Review a completed task and cascade completion
   .post("/review", async (c) => {
@@ -169,64 +183,73 @@ export const app = new Hono()
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
       if (message === "Task not found") return c.json({ error: "Task not found" }, 404);
-      throw err;
+      logger.error("POST /review failed", { taskId, error: message });
+      return c.json({ error: "Internal server error" }, 500);
     }
   })
 
   // GET /approvals — list all approvals
   .get("/approvals", async (c) => {
-    const all = await db.select().from(approvals);
-    return c.json(all);
+    try {
+      const all = await db.select().from(approvals);
+      return c.json(all);
+    } catch (err) {
+      logger.error("GET /approvals failed", { error: err instanceof Error ? err.message : String(err) });
+      return c.json({ error: "Internal server error" }, 500);
+    }
   })
 
   // POST /approvals/:id/resolve — approve or deny
   .post("/approvals/:id/resolve", async (c) => {
     const id = c.req.param("id");
-    const body = await c.req.json();
-    const action = body.action as string; // "GRANTED" or "DENIED"
+    try {
+      const body = await c.req.json();
+      const action = body.action as string; // "GRANTED" or "DENIED"
 
-    if (!["GRANTED", "DENIED"].includes(action)) {
-      return c.json({ error: "action must be GRANTED or DENIED" }, 400);
-    }
-
-    const [approval] = await db.select().from(approvals).where(eq(approvals.id, id));
-    if (!approval) return c.json({ error: "Approval not found" }, 404);
-
-    await db.update(approvals).set({
-      status: action,
-      reviewedBy: body.reviewedBy || "operator",
-      reviewedAt: new Date(),
-    }).where(eq(approvals.id, id));
-
-    // If GRANTED, notify orchestrator to unblock the task
-    if (action === "GRANTED" && approval.taskId) {
-      const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://orchestrator:4001";
-      try {
-        await fetch(`${ORCHESTRATOR_URL}/v1/missions/${approval.missionId}/tasks/${approval.taskId}/unblock`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
-        console.log(`[review] Unblock request sent for task ${approval.taskId}`);
-      } catch (err) {
-        console.warn(`[review] Failed to unblock task ${approval.taskId}:`, err);
+      if (!["GRANTED", "DENIED"].includes(action)) {
+        return c.json({ error: "action must be GRANTED or DENIED" }, 400);
       }
-    }
 
-    return c.json({ id, status: action, taskUnblocked: action === "GRANTED" });
+      // Update approval status first (must succeed regardless of unblock)
+      await db.update(approvals).set({
+        status: action,
+        reviewedBy: body.reviewedBy || "operator",
+        reviewedAt: new Date(),
+      }).where(eq(approvals.id, id));
+
+      // If approved, notify orchestrator to unblock the task
+      if (action === "GRANTED") {
+        const [approval] = await db.select().from(approvals).where(eq(approvals.id, id));
+        if (approval?.missionId && approval?.taskId) {
+          // Fire-and-forget with retry — approval is already GRANTED
+          notifyOrchestratorUnblock(approval.missionId, approval.taskId, id);
+        }
+      }
+
+      return c.json({ id, status: action });
+    } catch (err) {
+      logger.error("POST /approvals/:id/resolve failed", { approvalId: id, error: err instanceof Error ? err.message : String(err) });
+      return c.json({ error: "Internal server error" }, 500);
+    }
   })
 
   // GET /status/:missionId — Get review status for a mission
   .get("/status/:missionId", async (c) => {
     const missionId = c.req.param("missionId");
-    const [mission] = await db.select().from(missions).where(eq(missions.id, missionId));
-    if (!mission) return c.json({ error: "Mission not found" }, 404);
+    try {
+      const [mission] = await db.select().from(missions).where(eq(missions.id, missionId));
+      if (!mission) return c.json({ error: "Mission not found" }, 404);
 
-    const missionTasks = await db.select().from(tasks).where(eq(tasks.missionId, missionId));
-    const missionWaves = await db.select().from(waves).where(eq(waves.missionId, missionId));
+      const missionTasks = await db.select().from(tasks).where(eq(tasks.missionId, missionId));
+      const missionWaves = await db.select().from(waves).where(eq(waves.missionId, missionId));
 
-    return c.json({
-      missionStatus: mission.status,
-      waves: missionWaves.map(w => ({ id: w.id, status: w.status })),
-      tasks: missionTasks.map(t => ({ id: t.id, status: t.status, title: t.title })),
-    });
+      return c.json({
+        missionStatus: mission.status,
+        waves: missionWaves.map(w => ({ id: w.id, status: w.status })),
+        tasks: missionTasks.map(t => ({ id: t.id, status: t.status, title: t.title })),
+      });
+    } catch (err) {
+      logger.error("GET /status/:missionId failed", { missionId, error: err instanceof Error ? err.message : String(err) });
+      return c.json({ error: "Internal server error" }, 500);
+    }
   });

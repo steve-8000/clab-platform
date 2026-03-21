@@ -8,7 +8,7 @@ import type { EventContext } from "@clab/events";
 const logger = createLogger("orchestrator");
 
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pass@postgres:5432/clab";
-const sql = postgres(DATABASE_URL);
+export const sql = postgres(DATABASE_URL);
 export const db = drizzle(sql, { schema });
 
 export { logger };
@@ -16,7 +16,7 @@ export { logger };
 // --- EventBus (replaces raw NATS) ---
 
 const eventBus = new EventBus();
-let eventBusConnected = false;
+export let eventBusConnected = false;
 
 export async function connectEventBus(): Promise<void> {
   if (eventBusConnected) return;

@@ -5,6 +5,7 @@ import { knowledgeRoutes } from "./routes/knowledge.js";
 import { preKRoutes } from "./routes/pre-k.js";
 import { postKRoutes } from "./routes/post-k.js";
 import { insightRoutes } from "./routes/insights.js";
+import { store, isBusConnected } from "./store.js";
 
 export const app = new Hono()
   .use("*", cors())
@@ -13,6 +14,18 @@ export const app = new Hono()
   .route("/v1/pre-k", preKRoutes)
   .route("/v1/post-k", postKRoutes)
   .route("/v1/insights", insightRoutes)
-  .get("/health", (c) =>
-    c.json({ status: "ok", service: "knowledge-service" }),
-  );
+  .get("/health", async (c) => {
+    let storeStatus: { totalEntries: number; topics: number; lastUpdated?: string } | null = null;
+    try {
+      storeStatus = await store.status();
+    } catch {
+      // store unavailable
+    }
+
+    return c.json({
+      status: "ok",
+      service: "knowledge-service",
+      store: storeStatus ?? { error: "unavailable" },
+      eventBus: { connected: isBusConnected() },
+    });
+  });
