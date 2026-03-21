@@ -84,8 +84,21 @@ setup_clab_plugin() {
     info "Added CLAB_API_URL to $SHELL_RC"
   fi
 
-  # Register MCP server globally (~/.claude/mcp.json)
+  # Create version-independent symlink for plugin cache
+  local CACHE_DIR="$HOME/.claude/plugins/cache/clab-local/clab"
+  if [[ -d "$CACHE_DIR" ]]; then
+    # Find the versioned directory (e.g., 3.0.0, 3.1.0)
+    local VERSION_DIR
+    VERSION_DIR=$(find "$CACHE_DIR" -maxdepth 1 -mindepth 1 -type d ! -name current | head -1)
+    if [[ -n "$VERSION_DIR" ]]; then
+      ln -sfn "$VERSION_DIR" "$CACHE_DIR/current"
+      info "Created symlink: $CACHE_DIR/current → $(basename "$VERSION_DIR")"
+    fi
+  fi
+
+  # Register MCP server globally (~/.claude/mcp.json) using stable 'current' path
   local MCP_CONFIG="$HOME/.claude/mcp.json"
+  local MCP_BASE="$HOME/.claude/plugins/cache/clab-local/clab/current"
   mkdir -p "$HOME/.claude"
 
   info "Registering clab-cmux MCP server globally..."
@@ -97,13 +110,13 @@ if os.path.exists(p):
     with open(p) as f: d = json.load(f)
 d.setdefault('mcpServers', {})['clab-cmux'] = {
     'command': 'node',
-    'args': ['${REPO_ROOT}/dist/mcp/server.js'],
-    'cwd': '${REPO_ROOT}'
+    'args': ['${MCP_BASE}/dist/mcp/server.js'],
+    'cwd': '${MCP_BASE}'
 }
 with open(p, 'w') as f: json.dump(d, f, indent=2)
 print('done')
 "
-  info "MCP server registered at $MCP_CONFIG (path: ${REPO_ROOT})"
+  info "MCP server registered at $MCP_CONFIG (path: current → version-independent)"
 
   # Register plugin in Claude Code settings
   local CLAUDE_SETTINGS="$HOME/.claude/settings.json"
