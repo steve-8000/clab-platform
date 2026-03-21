@@ -79,6 +79,21 @@ rest.all("/sessions/*", async (c) => {
   }
 });
 
+// Proxy /approvals to review-service directly via DB
+rest.get("/approvals", async (c) => {
+  const REVIEW_URL = process.env.REVIEW_SERVICE_URL || "http://review-service:4006";
+  // For now, query the mission-service DB (approvals table is shared)
+  const MISSION_URL = process.env.MISSION_SERVICE_URL || "http://mission-service:4001";
+  try {
+    // Use a direct DB query via a new review-service endpoint
+    const res = await fetch(`${REVIEW_URL}/approvals`);
+    if (res.ok) return new Response(await res.text(), { headers: { "Content-Type": "application/json" } });
+    return c.json([]);
+  } catch {
+    return c.json([]);
+  }
+});
+
 // Health aggregation
 rest.get("/health/all", async (c) => {
   const services = [

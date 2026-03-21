@@ -5,13 +5,29 @@ import postgres from "postgres";
 import * as schema from "@clab/db";
 import { eq } from "drizzle-orm";
 
-const { tasks, taskRuns, waves, missions, artifacts } = schema;
+const { tasks, taskRuns, waves, missions, artifacts, approvals } = schema;
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pass@postgres:5432/clab";
 const sql = postgres(DATABASE_URL);
 const db = drizzle(sql, { schema });
 
+// Risk scoring
+function computeRisk(task: Record<string, unknown>, artifactCount: number): { score: number; level: string; reasons: string[] } {
+  let score = 0;
+  const reasons: string[] = [];
+  const desc = String(task.description || "").toLowerCase();
+
+  if (/\b(deploy|migration|infra|production)\b/.test(desc)) { score += 30; reasons.push("deployment/infra changes"); }
+  if (/\b(delete|remove|drop|destroy)\b/.test(desc)) { score += 25; reasons.push("destructive operations"); }
+  if (/\b(secret|password|token|credential|env)\b/.test(desc)) { score += 20; reasons.push("sensitive data access"); }
+  if (/\b(external|api|http|webhook)\b/.test(desc)) { score += 15; reasons.push("external system interaction"); }
+  if (artifactCount > 5) { score += 10; reasons.push("high artifact count"); }
+
+  const level = score >= 70 ? "HIGH" : score >= 30 ? "MEDIUM" : "LOW";
+  return { score: Math.min(score, 100), level, reasons };
+}
+
 // Standalone review logic — usable from both HTTP and NATS
-export async function reviewTask(taskId: string): Promise<{ passed: boolean; issues: string[]; artifactCount: number; missionId: string }> {
+export async function reviewTask(taskId: string): Promise<{ passed: boolean; issues: string[]; artifactCount: number; missionId: string; risk?: { score: number; level: string; reasons: string[] }; approvalRequired?: boolean; approvalId?: string }> {
   // 1. Get task
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task) throw new Error("Task not found");
@@ -31,9 +47,32 @@ export async function reviewTask(taskId: string): Promise<{ passed: boolean; iss
   else if (latestRun.status !== "SUCCEEDED") issues.push(`Task run status: ${latestRun.status}`);
   if (taskArtifacts.length === 0) issues.push("No artifacts produced");
 
-  const passed = issues.length === 0;
+  // 4b. Risk scoring
+  const risk = computeRisk(task, taskArtifacts.length);
+  if (risk.level === "HIGH") issues.push(`High risk (${risk.score}): ${risk.reasons.join(", ")}`);
 
-  console.log(`[review] Task ${taskId}: ${passed ? "PASSED" : "FAILED"} (${issues.join(", ") || "ok"})`);
+  const passed = issues.length === 0;
+  let approvalRequired = false;
+  let approvalId: string | undefined;
+
+  // 4c. If medium+ risk and passed, create approval request
+  if (passed && risk.level !== "LOW") {
+    approvalRequired = true;
+    const [approval] = await db.insert(approvals).values({
+      missionId: task.missionId,
+      taskId: task.id,
+      requestedCapability: risk.reasons[0] || "unknown",
+      reason: `Risk score ${risk.score} (${risk.level}): ${risk.reasons.join(", ")}`,
+      status: risk.level === "HIGH" ? "PENDING" : "GRANTED", // Auto-approve MEDIUM, manual for HIGH
+      riskLevel: risk.level,
+      actorKind: "system",
+      actorId: "review-service",
+    }).returning();
+    approvalId = approval.id;
+    console.log(`[review] Approval ${approval.id}: ${risk.level} risk — ${risk.level === "HIGH" ? "PENDING manual approval" : "auto-approved"}`);
+  }
+
+  console.log(`[review] Task ${taskId}: ${passed ? "PASSED" : "FAILED"} (risk: ${risk.level}/${risk.score})`);
 
   // 5. If passed, check if wave is complete
   if (passed) {
@@ -58,7 +97,7 @@ export async function reviewTask(taskId: string): Promise<{ passed: boolean; iss
     }
   }
 
-  return { passed, issues, artifactCount: taskArtifacts.length, missionId: task.missionId };
+  return { passed, issues, artifactCount: taskArtifacts.length, missionId: task.missionId, risk, approvalRequired, approvalId };
 }
 
 export const app = new Hono()
@@ -80,6 +119,31 @@ export const app = new Hono()
       if (message === "Task not found") return c.json({ error: "Task not found" }, 404);
       throw err;
     }
+  })
+
+  // GET /approvals — list all approvals
+  .get("/approvals", async (c) => {
+    const all = await db.select().from(approvals);
+    return c.json(all);
+  })
+
+  // POST /approvals/:id/resolve — approve or deny
+  .post("/approvals/:id/resolve", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json();
+    const action = body.action as string; // "GRANTED" or "DENIED"
+
+    if (!["GRANTED", "DENIED"].includes(action)) {
+      return c.json({ error: "action must be GRANTED or DENIED" }, 400);
+    }
+
+    await db.update(approvals).set({
+      status: action,
+      reviewedBy: body.reviewedBy || "operator",
+      reviewedAt: new Date(),
+    }).where(eq(approvals.id, id));
+
+    return c.json({ id, status: action });
   })
 
   // GET /status/:missionId — Get review status for a mission
