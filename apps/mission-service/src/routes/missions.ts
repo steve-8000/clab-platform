@@ -1,390 +1,108 @@
 import { Hono } from "hono";
-import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { db, logger } from "../deps.js";
 import { missions, plans, waves, tasks } from "@clab/db";
-import {
-  assertTransition,
-  MISSION_TRANSITIONS,
-  type MissionStatus,
-} from "@clab/domain";
-import { createEvent } from "@clab/events";
-import { createLogger } from "@clab/telemetry";
-import { getDb, getBus, getPlanner, getScheduler } from "../deps.js";
+import { eq } from "drizzle-orm";
 
-const logger = createLogger("mission-service:missions");
+export const missionRoutes = new Hono();
 
-// ---------------------------------------------------------------------------
-// Input schemas
-// ---------------------------------------------------------------------------
+// POST / — Create mission + auto-plan
+missionRoutes.post("/", async (c) => {
+  const body = await c.req.json();
+  const { title, objective, workspaceId } = body;
 
-const CreateMissionInput = z.object({
-  workspaceId: z.string().uuid(),
-  title: z.string().min(1).max(500),
-  objective: z.string().min(1),
-  priority: z.enum(["LOW", "NORMAL", "HIGH", "CRITICAL"]).default("NORMAL"),
-  constraints: z.array(z.string()).default([]),
-  acceptanceCriteria: z.array(z.string()).default([]),
+  if (!title || !objective || !workspaceId) {
+    return c.json({ error: "title, objective, workspaceId required" }, 400);
+  }
+
+  // 1. Create mission
+  const [mission] = await db.insert(missions).values({
+    workspaceId,
+    title,
+    objective,
+    status: "DRAFT",
+    priority: body.priority || "NORMAL",
+  }).returning();
+
+  logger.info("Mission created", { missionId: mission.id });
+
+  // 2. Auto-plan: create plan + 1 wave + 1 task
+  const [plan] = await db.insert(plans).values({
+    missionId: mission.id,
+    summary: `Plan for: ${title}`,
+    waveCount: 1,
+  }).returning();
+
+  const [wave] = await db.insert(waves).values({
+    planId: plan.id,
+    missionId: mission.id,
+    ordinal: 1,
+    label: "Wave 1",
+    status: "PENDING",
+    directive: objective,
+  }).returning();
+
+  const [task] = await db.insert(tasks).values({
+    waveId: wave.id,
+    missionId: mission.id,
+    title: title,
+    description: objective,
+    role: body.role || "BUILDER",
+    engine: body.engine || "CODEX",
+    status: "QUEUED",
+  }).returning();
+
+  // 3. Update mission to PLANNED
+  await db.update(missions).set({ status: "PLANNED", updatedAt: new Date() }).where(eq(missions.id, mission.id));
+
+  logger.info("Mission planned", { missionId: mission.id, planId: plan.id, waveId: wave.id, taskId: task.id });
+
+  return c.json({
+    mission: { ...mission, status: "PLANNED" },
+    plan,
+    wave,
+    task,
+  }, 201);
 });
 
-// ---------------------------------------------------------------------------
-// Routes
-// ---------------------------------------------------------------------------
+// POST /:id/start — Start mission (queue tasks)
+missionRoutes.post("/:id/start", async (c) => {
+  const id = c.req.param("id");
 
-export const missionRoutes = new Hono()
+  // Update mission to RUNNING
+  await db.update(missions).set({ status: "RUNNING", updatedAt: new Date() }).where(eq(missions.id, id));
 
-  // POST / — Create mission
-  .post("/", async (c) => {
-    const body = await c.req.json();
-    const input = CreateMissionInput.safeParse(body);
-    if (!input.success) {
-      return c.json({ error: "Validation failed", details: input.error.flatten() }, 400);
-    }
+  // Update wave to RUNNING
+  const missionWaves = await db.select().from(waves).where(eq(waves.missionId, id));
+  for (const wave of missionWaves) {
+    await db.update(waves).set({ status: "RUNNING", startedAt: new Date() }).where(eq(waves.id, wave.id));
+  }
 
-    const db = getDb();
-    const bus = getBus();
-    const { workspaceId, title, objective, priority, constraints, acceptanceCriteria } = input.data;
+  // Update tasks to ASSIGNED
+  const missionTasks = await db.select().from(tasks).where(eq(tasks.missionId, id));
+  for (const task of missionTasks) {
+    await db.update(tasks).set({ status: "ASSIGNED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
+  }
 
-    const [mission] = await db
-      .insert(missions)
-      .values({
-        workspaceId,
-        title,
-        objective,
-        status: "DRAFT",
-        priority,
-        constraints,
-        acceptanceCriteria,
-      })
-      .returning();
+  logger.info("Mission started", { missionId: id, tasks: missionTasks.length });
 
-    if (!mission) {
-      return c.json({ error: "Failed to create mission" }, 500);
-    }
+  return c.json({ status: "RUNNING", tasksAssigned: missionTasks.length });
+});
 
-    try {
-      await bus.publish(
-        createEvent("mission.created", {
-          title: mission.title,
-          description: mission.objective,
-          createdBy: "system",
-        }, {
-          missionId: mission.id,
-          workspaceId: mission.workspaceId,
-        }),
-      );
-    } catch (err) {
-      logger.warn("Failed to emit mission.created event", { error: String(err) });
-    }
+// GET /:id — Get mission with all related data
+missionRoutes.get("/:id", async (c) => {
+  const id = c.req.param("id");
+  const [mission] = await db.select().from(missions).where(eq(missions.id, id));
+  if (!mission) return c.json({ error: "Mission not found" }, 404);
 
-    logger.info("Mission created", { missionId: mission.id, title });
+  const missionPlans = await db.select().from(plans).where(eq(plans.missionId, id));
+  const missionWaves = await db.select().from(waves).where(eq(waves.missionId, id));
+  const missionTasks = await db.select().from(tasks).where(eq(tasks.missionId, id));
 
-    return c.json({ mission }, 201);
-  })
+  return c.json({ mission, plans: missionPlans, waves: missionWaves, tasks: missionTasks });
+});
 
-  // GET /:id — Get mission by ID
-  .get("/:id", async (c) => {
-    const id = c.req.param("id");
-    const db = getDb();
-
-    const [mission] = await db
-      .select()
-      .from(missions)
-      .where(eq(missions.id, id))
-      .limit(1);
-
-    if (!mission) {
-      return c.json({ error: "Mission not found" }, 404);
-    }
-
-    // Include waves and tasks for a complete view
-    const missionWaves = await db
-      .select()
-      .from(waves)
-      .where(eq(waves.missionId, id))
-      .orderBy(waves.ordinal);
-
-    const missionTasks = await db
-      .select()
-      .from(tasks)
-      .where(eq(tasks.missionId, id));
-
-    const missionPlans = await db
-      .select()
-      .from(plans)
-      .where(eq(plans.missionId, id));
-
-    return c.json({
-      mission,
-      plans: missionPlans,
-      waves: missionWaves,
-      tasks: missionTasks,
-    });
-  })
-
-  // POST /:id/plan — Plan mission
-  .post("/:id/plan", async (c) => {
-    const id = c.req.param("id");
-    const db = getDb();
-    const bus = getBus();
-    const planner = getPlanner();
-
-    // Fetch mission
-    const [mission] = await db
-      .select()
-      .from(missions)
-      .where(eq(missions.id, id))
-      .limit(1);
-
-    if (!mission) {
-      return c.json({ error: "Mission not found" }, 404);
-    }
-
-    // Validate state transition: must be DRAFT or FAILED to re-plan
-    if (mission.status !== "DRAFT" && mission.status !== "FAILED") {
-      return c.json({
-        error: `Cannot plan mission in ${mission.status} status. Must be DRAFT or FAILED.`,
-      }, 409);
-    }
-
-    // Run the planner
-    const planResult = await planner.plan(
-      mission.id,
-      mission.objective,
-      (mission.constraints as string[]) ?? [],
-    );
-
-    // Deactivate any previous plans
-    await db
-      .update(plans)
-      .set({ isActive: false })
-      .where(eq(plans.missionId, id));
-
-    // Insert plan
-    const [plan] = await db
-      .insert(plans)
-      .values({
-        missionId: mission.id,
-        summary: planResult.summary,
-        waveCount: planResult.waves.length,
-        isActive: true,
-      })
-      .returning();
-
-    if (!plan) {
-      return c.json({ error: "Failed to create plan" }, 500);
-    }
-
-    // Insert waves and tasks
-    const createdWaves: (typeof waves.$inferSelect)[] = [];
-    const createdTasks: (typeof tasks.$inferSelect)[] = [];
-
-    for (const plannedWave of planResult.waves) {
-      const [wave] = await db
-        .insert(waves)
-        .values({
-          planId: plan.id,
-          missionId: mission.id,
-          ordinal: plannedWave.index,
-          label: plannedWave.label,
-          status: "PENDING",
-          directive: plannedWave.directive,
-        })
-        .returning();
-
-      if (!wave) continue;
-      createdWaves.push(wave);
-
-      for (const plannedTask of plannedWave.tasks) {
-        const [task] = await db
-          .insert(tasks)
-          .values({
-            waveId: wave.id,
-            missionId: mission.id,
-            title: plannedTask.title,
-            description: plannedTask.instruction,
-            role: plannedTask.role,
-            engine: plannedTask.engine,
-            status: "QUEUED",
-            acceptanceCriteria: plannedTask.acceptanceCriteria,
-            maxRetries: plannedTask.maxRetries,
-            timeoutMs: plannedTask.timeoutMs,
-          })
-          .returning();
-
-        if (task) createdTasks.push(task);
-      }
-    }
-
-    // Transition mission to PLANNED
-    const targetStatus: MissionStatus = "PLANNED";
-    assertTransition(MISSION_TRANSITIONS, mission.status as MissionStatus, targetStatus);
-
-    await db
-      .update(missions)
-      .set({ status: targetStatus, updatedAt: new Date() })
-      .where(eq(missions.id, id));
-
-    try {
-      await bus.publish(
-        createEvent("mission.planned", {
-          waveCount: createdWaves.length,
-          taskCount: createdTasks.length,
-          planSummary: planResult.summary,
-        }, { missionId: mission.id, workspaceId: mission.workspaceId }),
-      );
-    } catch (err) {
-      logger.warn("Failed to emit mission.planned event", { error: String(err) });
-    }
-
-    logger.info("Mission planned", {
-      missionId: mission.id,
-      planId: plan.id,
-      waveCount: createdWaves.length,
-      taskCount: createdTasks.length,
-    });
-
-    return c.json({
-      plan,
-      waves: createdWaves,
-      tasks: createdTasks,
-      summary: planResult.summary,
-      assumptions: planResult.assumptions,
-    });
-  })
-
-  // POST /:id/start — Start mission
-  .post("/:id/start", async (c) => {
-    const id = c.req.param("id");
-    const db = getDb();
-    const bus = getBus();
-    const scheduler = getScheduler();
-
-    const [mission] = await db
-      .select()
-      .from(missions)
-      .where(eq(missions.id, id))
-      .limit(1);
-
-    if (!mission) {
-      return c.json({ error: "Mission not found" }, 404);
-    }
-
-    // Must be PLANNED to start
-    assertTransition(MISSION_TRANSITIONS, mission.status as MissionStatus, "RUNNING");
-
-    await db
-      .update(missions)
-      .set({ status: "RUNNING", updatedAt: new Date() })
-      .where(eq(missions.id, id));
-
-    const startedAt = new Date().toISOString();
-
-    try {
-      await bus.publish(
-        createEvent("mission.started", { startedAt }, {
-          missionId: mission.id,
-          workspaceId: mission.workspaceId,
-        }),
-      );
-    } catch (err) {
-      logger.warn("Failed to emit mission.started event", { error: String(err) });
-    }
-
-    // Schedule the first wave
-    const firstWave = await scheduler.scheduleNext(mission.id);
-
-    logger.info("Mission started", {
-      missionId: mission.id,
-      firstWaveId: firstWave?.id ?? null,
-    });
-
-    return c.json({
-      mission: { ...mission, status: "RUNNING" },
-      currentWave: firstWave,
-      startedAt,
-    });
-  })
-
-  // POST /:id/abort — Abort mission
-  .post("/:id/abort", async (c) => {
-    const id = c.req.param("id");
-    const db = getDb();
-    const bus = getBus();
-
-    const [mission] = await db
-      .select()
-      .from(missions)
-      .where(eq(missions.id, id))
-      .limit(1);
-
-    if (!mission) {
-      return c.json({ error: "Mission not found" }, 404);
-    }
-
-    const currentStatus = mission.status as MissionStatus;
-    assertTransition(MISSION_TRANSITIONS, currentStatus, "ABORTED");
-
-    const now = new Date();
-
-    // Abort the mission
-    await db
-      .update(missions)
-      .set({ status: "ABORTED", updatedAt: now, completedAt: now })
-      .where(eq(missions.id, id));
-
-    // Cancel all non-terminal tasks
-    const missionTasks = await db
-      .select()
-      .from(tasks)
-      .where(eq(tasks.missionId, id));
-
-    const cancellableStatuses = ["QUEUED", "ASSIGNED", "RUNNING", "BLOCKED"];
-    let cancelledCount = 0;
-
-    for (const task of missionTasks) {
-      if (cancellableStatuses.includes(task.status)) {
-        await db
-          .update(tasks)
-          .set({ status: "CANCELLED", updatedAt: now })
-          .where(eq(tasks.id, task.id));
-        cancelledCount++;
-      }
-    }
-
-    // Fail all non-terminal waves
-    const missionWaves = await db
-      .select()
-      .from(waves)
-      .where(eq(waves.missionId, id));
-
-    const activeWaveStatuses = ["PENDING", "READY", "RUNNING", "BLOCKED"];
-    for (const wave of missionWaves) {
-      if (activeWaveStatuses.includes(wave.status)) {
-        await db
-          .update(waves)
-          .set({ status: "FAILED", completedAt: now })
-          .where(eq(waves.id, wave.id));
-      }
-    }
-
-    try {
-      await bus.publish(
-        createEvent("mission.failed", {
-          reason: "Mission aborted by user",
-          retriable: false,
-        }, { missionId: mission.id, workspaceId: mission.workspaceId }),
-      );
-    } catch (err) {
-      logger.warn("Failed to emit mission.failed event", { error: String(err) });
-    }
-
-    logger.info("Mission aborted", {
-      missionId: mission.id,
-      cancelledTasks: cancelledCount,
-    });
-
-    return c.json({
-      mission: { ...mission, status: "ABORTED" },
-      cancelledTasks: cancelledCount,
-    });
-  });
+// GET / — List all missions
+missionRoutes.get("/", async (c) => {
+  const allMissions = await db.select().from(missions);
+  return c.json(allMissions);
+});

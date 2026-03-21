@@ -1,140 +1,55 @@
 import { Hono } from "hono";
-// import { ClabClient } from "@clab/sdk";
+
+const MISSION_SERVICE_URL = process.env.MISSION_SERVICE_URL || "http://mission-service:4001";
 
 const rest = new Hono();
 
-// ---------------------------------------------------------------------------
-// Missions
-// ---------------------------------------------------------------------------
+// Proxy all /missions/* to mission-service
+rest.all("/missions/*", async (c) => {
+  const path = c.req.path.replace("/v1", "");  // /v1/missions/xxx -> /v1/missions/xxx
+  const url = `${MISSION_SERVICE_URL}/v1${path.startsWith("/missions") ? path : "/missions" + path}`;
 
-rest.post("/missions", async (c) => {
-  const body = await c.req.json();
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "mission.create", body }, 201);
+  const init: RequestInit = {
+    method: c.req.method,
+    headers: { "Content-Type": "application/json" },
+  };
+
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    init.body = await c.req.text();
+  }
+
+  try {
+    const res = await fetch(url, init);
+    const data = await res.text();
+    return new Response(data, {
+      status: res.status,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    return c.json({ error: "Mission service unavailable", detail: String(err) }, 502);
+  }
 });
 
-rest.get("/missions/:id", async (c) => {
-  const { id } = c.req.param();
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "mission.get", missionId: id });
-});
+// Health aggregation
+rest.get("/health/all", async (c) => {
+  const services = [
+    { name: "mission-service", url: MISSION_SERVICE_URL },
+    { name: "runtime-manager", url: process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002" },
+    { name: "review-service", url: process.env.REVIEW_SERVICE_URL || "http://review-service:4006" },
+    { name: "knowledge-service", url: process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007" },
+  ];
 
-rest.post("/missions/:id/plan", async (c) => {
-  const { id } = c.req.param();
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "mission.plan", missionId: id });
-});
+  const results: Record<string, string> = {};
+  for (const svc of services) {
+    try {
+      const res = await fetch(`${svc.url}/health`, { signal: AbortSignal.timeout(3000) });
+      results[svc.name] = res.ok ? "ok" : "error";
+    } catch {
+      results[svc.name] = "unreachable";
+    }
+  }
 
-rest.post("/missions/:id/abort", async (c) => {
-  const { id } = c.req.param();
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "mission.abort", missionId: id });
-});
-
-// ---------------------------------------------------------------------------
-// Tasks
-// ---------------------------------------------------------------------------
-
-rest.post("/tasks", async (c) => {
-  const body = await c.req.json();
-  // TODO: delegate via ClabClient → runtime-manager
-  return c.json({ ok: true, action: "task.create", body }, 201);
-});
-
-rest.post("/tasks/:id/retry", async (c) => {
-  const { id } = c.req.param();
-  // TODO: delegate via ClabClient → runtime-manager
-  return c.json({ ok: true, action: "task.retry", taskId: id });
-});
-
-rest.post("/tasks/:id/review", async (c) => {
-  const { id } = c.req.param();
-  const body = await c.req.json();
-  // TODO: delegate via ClabClient → runtime-manager
-  return c.json({ ok: true, action: "task.review", taskId: id, body });
-});
-
-// ---------------------------------------------------------------------------
-// Waves
-// ---------------------------------------------------------------------------
-
-rest.get("/waves/:missionId", async (c) => {
-  const { missionId } = c.req.param();
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "waves.list", missionId });
-});
-
-rest.post("/waves/:id/release", async (c) => {
-  const { id } = c.req.param();
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "wave.release", waveId: id });
-});
-
-// ---------------------------------------------------------------------------
-// Sessions
-// ---------------------------------------------------------------------------
-
-rest.get("/sessions", async (c) => {
-  // TODO: delegate via ClabClient → runtime-manager
-  return c.json({ ok: true, action: "sessions.list" });
-});
-
-rest.post("/sessions/:id/rebind", async (c) => {
-  const { id } = c.req.param();
-  const body = await c.req.json();
-  // TODO: delegate via ClabClient → runtime-manager
-  return c.json({ ok: true, action: "session.rebind", sessionId: id, body });
-});
-
-rest.post("/sessions/:id/interrupt", async (c) => {
-  const { id } = c.req.param();
-  // TODO: delegate via ClabClient → runtime-manager
-  return c.json({ ok: true, action: "session.interrupt", sessionId: id });
-});
-
-// ---------------------------------------------------------------------------
-// Artifacts
-// ---------------------------------------------------------------------------
-
-rest.get("/artifacts/:missionId", async (c) => {
-  const { missionId } = c.req.param();
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "artifacts.list", missionId });
-});
-
-// ---------------------------------------------------------------------------
-// Decisions
-// ---------------------------------------------------------------------------
-
-rest.get("/decisions/:missionId", async (c) => {
-  const { missionId } = c.req.param();
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "decisions.list", missionId });
-});
-
-// ---------------------------------------------------------------------------
-// Approvals
-// ---------------------------------------------------------------------------
-
-rest.get("/approvals", async (c) => {
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "approvals.list" });
-});
-
-rest.post("/approvals/:id/resolve", async (c) => {
-  const { id } = c.req.param();
-  const body = await c.req.json();
-  // TODO: delegate via ClabClient → mission-service
-  return c.json({ ok: true, action: "approval.resolve", approvalId: id, body });
-});
-
-// ---------------------------------------------------------------------------
-// Dashboard
-// ---------------------------------------------------------------------------
-
-rest.get("/dashboard", async (c) => {
-  // TODO: delegate via ClabClient → mission-service aggregate
-  return c.json({ ok: true, action: "dashboard" });
+  return c.json(results);
 });
 
 export { rest as restRoutes };

@@ -11,18 +11,19 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "hono": "^4.7",
-    "@hono/node-server": "^1.13",
-    "@clab/domain": "workspace:*",
     "@clab/db": "workspace:*",
-    "drizzle-orm": "^0.38",
+    "@clab/domain": "workspace:*",
     "@clab/events": "workspace:*",
     "@clab/policy": "workspace:*",
-    "@clab/telemetry": "workspace:*"
+    "@clab/telemetry": "workspace:*",
+    "@hono/node-server": "^1.13",
+    "drizzle-orm": "^0.38.4",
+    "hono": "^4.7",
+    "postgres": "^3.4"
   },
   "devDependencies": {
-    "typescript": "^5.7",
+    "@types/node": "^22",
     "tsx": "^4.19",
-    "@types/node": "^22"
+    "typescript": "^5.7"
   }
 }
