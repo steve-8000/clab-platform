@@ -30,6 +30,55 @@ rest.all("/missions/*", async (c) => {
   }
 });
 
+// Dashboard aggregate endpoint
+rest.get("/dashboard", async (c) => {
+  const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
+
+  try {
+    // Fetch missions
+    const missionsRes = await fetch(`${MISSION_SERVICE_URL}/v1/missions`);
+    const allMissions = missionsRes.ok ? await missionsRes.json() as Array<Record<string, unknown>> : [];
+
+    // Fetch sessions
+    const sessionsRes = await fetch(`${RUNTIME_URL}/sessions`);
+    const allSessions = sessionsRes.ok ? await sessionsRes.json() as Array<Record<string, unknown>> : [];
+
+    const activeMissions = allMissions.filter((m) => m.status === "RUNNING").length;
+    const completedMissions = allMissions.filter((m) => m.status === "COMPLETED").length;
+    const failedMissions = allMissions.filter((m) => m.status === "FAILED").length;
+    const runningSessions = allSessions.filter((s) => s.state === "RUNNING").length;
+    const staleSessions = allSessions.filter((s) => s.state === "STALE").length;
+
+    return c.json({
+      stats: {
+        activeMissions,
+        completedMissions,
+        failedMissions,
+        totalMissions: allMissions.length,
+        runningSessions,
+        staleSessions,
+        totalSessions: allSessions.length,
+      },
+      recentMissions: allMissions.slice(-10).reverse(),
+      activeSessions: allSessions.filter((s) => s.state !== "CLOSED"),
+    });
+  } catch (err) {
+    return c.json({ error: "Dashboard data unavailable", detail: String(err) }, 502);
+  }
+});
+
+// Proxy /sessions/* to runtime-manager
+rest.all("/sessions/*", async (c) => {
+  const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
+  const path = c.req.path.replace("/v1", "");
+  try {
+    const res = await fetch(`${RUNTIME_URL}${path}`);
+    return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json" } });
+  } catch (err) {
+    return c.json({ error: "Runtime manager unavailable" }, 502);
+  }
+});
+
 // Health aggregation
 rest.get("/health/all", async (c) => {
   const services = [
