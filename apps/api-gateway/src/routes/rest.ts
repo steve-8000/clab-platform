@@ -74,16 +74,43 @@ rest.get("/dashboard", async (c) => {
     const runningSessions = allSessions.filter((s) => s.state === "RUNNING").length;
     const staleSessions = allSessions.filter((s) => s.state === "STALE").length;
 
-    // Fetch knowledge stats
+    // Fetch knowledge stats + recent entries + insights
     const KNOWLEDGE_SVC = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
-    let knowledgeStats = { totalEntries: 0, topics: 0 };
+    let knowledgeStats = { totalEntries: 0, topics: 0, lastUpdated: null as string | null };
+    let recentKnowledge: Array<Record<string, unknown>> = [];
+    let recentInsights: Array<Record<string, unknown>> = [];
     try {
-      const kbRes = await fetch(`${KNOWLEDGE_SVC}/v1/knowledge/status`, { signal: AbortSignal.timeout(3000) });
-      if (kbRes.ok) {
-        const kbData = await kbRes.json() as Record<string, unknown>;
-        knowledgeStats = { totalEntries: kbData.totalEntries as number ?? 0, topics: kbData.topics as number ?? 0 };
+      const [kbStatusRes, kbSearchRes, insightsRes] = await Promise.all([
+        fetch(`${KNOWLEDGE_SVC}/v1/knowledge/status`, { signal: AbortSignal.timeout(3000) }),
+        fetch(`${KNOWLEDGE_SVC}/v1/knowledge/search?q=*&limit=10`, { signal: AbortSignal.timeout(3000) }),
+        fetch(`${KNOWLEDGE_SVC}/v1/insights`, { signal: AbortSignal.timeout(3000) }),
+      ]);
+      if (kbStatusRes.ok) {
+        const kbData = await kbStatusRes.json() as Record<string, unknown>;
+        knowledgeStats = {
+          totalEntries: kbData.totalEntries as number ?? 0,
+          topics: kbData.topics as number ?? 0,
+          lastUpdated: kbData.lastUpdated as string ?? null,
+        };
+      }
+      if (kbSearchRes.ok) {
+        recentKnowledge = (await kbSearchRes.json() as Array<Record<string, unknown>>).slice(0, 10);
+      }
+      if (insightsRes.ok) {
+        recentInsights = (await insightsRes.json() as Array<Record<string, unknown>>).slice(0, 10);
       }
     } catch {}
+
+    // Derive workflow pipeline stats from missions
+    const pipelineStats = {
+      preK: filtered.filter((m) => m.status === "PLANNED").length,
+      dispatched: filtered.filter((m) => m.status === "RUNNING" && !(m as Record<string, unknown>).startedAt).length,
+      executing: filtered.filter((m) => m.status === "RUNNING").length,
+      postK: 0,
+      review: filtered.filter((m) => m.status === "REVIEW" || m.status === "PENDING_REVIEW").length,
+      completed: completedMissions,
+      failed: failedMissions,
+    };
 
     return c.json({
       stats: {
@@ -96,9 +123,13 @@ rest.get("/dashboard", async (c) => {
         totalSessions: allSessions.length,
         knowledgeEntries: knowledgeStats.totalEntries,
         knowledgeTopics: knowledgeStats.topics,
+        knowledgeLastUpdated: knowledgeStats.lastUpdated,
       },
       recentMissions: filtered.slice(-10).reverse(),
       activeSessions: allSessions.filter((s) => s.state !== "CLOSED"),
+      recentKnowledge,
+      recentInsights,
+      pipelineStats,
     });
   } catch (err) {
     return c.json({ error: "Dashboard data unavailable", detail: String(err) }, 502);

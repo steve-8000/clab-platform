@@ -1,26 +1,23 @@
-import { fetchDashboard } from "@/lib/api";
+import { DashboardData } from "@/lib/api";
 
-export async function StatusCards() {
-  let stats = { activeMissions: 0, completedMissions: 0, totalMissions: 0, runningSessions: 0, staleSessions: 0, totalSessions: 0, failedMissions: 0 };
-
-  try {
-    const data = await fetchDashboard();
-    stats = data.stats;
-  } catch {}
-
+export function StatusCards({ stats }: { stats: DashboardData["stats"] }) {
   const cards = [
-    { label: "Active Missions", value: stats.activeMissions, color: "text-blue-400" },
-    { label: "Completed", value: stats.completedMissions, color: "text-green-400" },
-    { label: "Total Missions", value: stats.totalMissions, color: "text-white" },
-    { label: "Running Sessions", value: stats.runningSessions, color: "text-cyan-400" },
-    { label: "Stale Sessions", value: stats.staleSessions, color: "text-yellow-400" },
+    { label: "Active Missions", value: stats.activeMissions, color: "text-blue-400", icon: "▶" },
+    { label: "Completed", value: stats.completedMissions, color: "text-green-400", icon: "✓" },
+    { label: "Failed", value: stats.failedMissions, color: "text-red-400", icon: "✗" },
+    { label: "Running Sessions", value: stats.runningSessions, color: "text-cyan-400", icon: "◉" },
+    { label: "Knowledge Entries", value: stats.knowledgeEntries, color: "text-purple-400", icon: "◆" },
+    { label: "Knowledge Topics", value: stats.knowledgeTopics, color: "text-indigo-400", icon: "◇" },
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
       {cards.map((card) => (
-        <div key={card.label} className="bg-gray-900 rounded-lg p-4 border border-gray-800">
-          <p className="text-sm text-gray-400">{card.label}</p>
+        <div key={card.label} className="bg-gray-900 rounded-lg p-4 border border-gray-800 hover:border-gray-700 transition-colors">
+          <div className="flex items-center gap-2 mb-1">
+            <span className={`text-xs ${card.color}`}>{card.icon}</span>
+            <p className="text-xs text-gray-500 uppercase tracking-wide">{card.label}</p>
+          </div>
           <p className={`text-2xl font-bold ${card.color}`}>{card.value}</p>
         </div>
       ))}
