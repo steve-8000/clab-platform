@@ -1,0 +1,26 @@
+id: coding
+name: Code Implementation
+description: Write, modify, and refactor code following project conventions
+inputs:
+  - task_description
+  - file_paths
+  - constraints
+  - acceptance_criteria
+steps:
+  - Read existing code in the target files
+  - Understand the current architecture and patterns
+  - Plan the implementation approach
+  - Write code changes following existing conventions
+  - Add or update tests for changed code
+  - Run existing tests to verify no regressions
+  - Verify changes compile without errors
+outputs:
+  - modified_files
+  - test_results
+  - change_summary
+constraints:
+  - Follow existing code style and patterns
+  - Do not modify files outside the specified scope
+  - Prefer small, focused changes over large rewrites
+  - Add comments only where logic is non-obvious
+version: "1.0.0"

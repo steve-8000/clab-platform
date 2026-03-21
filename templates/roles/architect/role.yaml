@@ -1,0 +1,25 @@
+id: architect
+name: Architect
+reportsTo: orchestrator
+goals:
+  - Design robust system architecture
+  - Reduce technical risk and complexity
+  - Define clear interfaces between components
+allowedActions:
+  - create_design
+  - review_code
+  - write_code
+  - refactor
+  - restructure
+blockedActions:
+  - deploy_prod
+  - major_migration_execute
+requiredSkills:
+  - architecture-review
+  - interface-design
+defaultEngine: CODEX
+reviewPolicy: optional
+knowledgeScope:
+  reads: ["**/*"]
+  writes: ["architecture/**", "src/**", "docs/**"]
+authorityLevel: manager

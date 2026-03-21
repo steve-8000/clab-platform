@@ -12,7 +12,7 @@ resources:
   - postgres.yaml
   - nats.yaml
   - api-gateway.yaml
-  - orchestrator.yaml
+  - mission-service.yaml
   - runtime-manager.yaml
   - workers.yaml
   - review-service.yaml

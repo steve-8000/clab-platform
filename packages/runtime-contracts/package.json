@@ -1,0 +1,14 @@
+{
+  "name": "@clab/runtime-contracts",
+  "version": "2.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "dependencies": {
+    "zod": "*",
+    "@clab/domain": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "*",
+    "@types/node": "*"
+  }
+}

@@ -1,4 +1,4 @@
-import type { MissionStatus, WaveStatus, TaskStatus, TaskRunStatus, SessionState } from "./enums.js";
+import type { MissionStatus, WaveStatus, TaskStatus, TaskRunStatus, SessionState, MessageStatus, RoleStatus } from "./enums.js";
 
 // ---------------------------------------------------------------------------
 // Transition maps
@@ -35,21 +35,38 @@ export const TASK_TRANSITIONS: Record<TaskStatus, readonly TaskStatus[]> = {
 };
 
 export const TASK_RUN_TRANSITIONS: Record<TaskRunStatus, readonly TaskRunStatus[]> = {
-  STARTING:  ["RUNNING", "FAILED", "ABORTED"],
-  RUNNING:   ["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"],
-  SUCCEEDED: [],
-  FAILED:    [],
-  TIMED_OUT: [],
-  ABORTED:   [],
+  STARTING:       ["RUNNING", "FAILED", "ABORTED"],
+  RUNNING:        ["AWAITING_INPUT", "SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED"],
+  AWAITING_INPUT: ["RUNNING", "SUCCEEDED", "FAILED", "ABORTED"],
+  SUCCEEDED:      [],
+  FAILED:         [],
+  TIMED_OUT:      [],
+  ABORTED:        [],
 };
 
 export const SESSION_TRANSITIONS: Record<SessionState, readonly SessionState[]> = {
-  IDLE:    ["BOUND", "CLOSED"],
-  BOUND:   ["RUNNING", "IDLE", "CLOSED"],
-  RUNNING: ["IDLE", "STALE", "CLOSED"],
-  STALE:   ["RUNNING", "LOST", "CLOSED"],
-  LOST:    ["CLOSED"],
-  CLOSED:  [],
+  IDLE:           ["BOUND", "CLOSED"],
+  BOUND:          ["RUNNING", "IDLE", "CLOSED"],
+  RUNNING:        ["AWAITING_INPUT", "IDLE", "STALE", "CLOSED"],
+  AWAITING_INPUT: ["RUNNING", "STALE", "CLOSED"],
+  STALE:          ["RUNNING", "LOST", "CLOSED"],
+  LOST:           ["CLOSED"],
+  CLOSED:         [],
+};
+
+export const MESSAGE_TRANSITIONS: Record<MessageStatus, readonly MessageStatus[]> = {
+  streaming:      ["done", "error", "awaiting_input", "interrupted"],
+  awaiting_input: ["streaming", "done", "error", "interrupted"],
+  interrupted:    ["streaming", "done"],
+  done:           [],
+  error:          [],
+};
+
+export const ROLE_STATUS_TRANSITIONS: Record<RoleStatus, readonly RoleStatus[]> = {
+  idle:           ["working"],
+  working:        ["awaiting_input", "done"],
+  awaiting_input: ["working", "done"],
+  done:           ["idle"],
 };
 
 // ---------------------------------------------------------------------------

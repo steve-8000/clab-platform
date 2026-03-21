@@ -34,8 +34,8 @@ API_PORT=3000
 JWT_SECRET=<generate-a-secure-secret>
 DASHBOARD_ORIGIN=https://dashboard.example.com
 
-# Orchestrator
-ORCHESTRATOR_PORT=3001
+# Mission Service
+MISSION_SERVICE_PORT=3001
 PLANNING_MODEL=claude-sonnet-4-20250514
 
 # Runtime Manager
@@ -71,7 +71,7 @@ Each app has its own Dockerfile. Build from the repo root (monorepo context):
 REGISTRY=ghcr.io/your-org/clab-platform
 
 # Build all service images
-for service in api-gateway orchestrator runtime-manager browser-service review-service dashboard; do
+for service in api-gateway mission-service runtime-manager browser-service review-service dashboard; do
   docker build \
     -f apps/${service}/Dockerfile \
     -t ${REGISTRY}/${service}:$(git rev-parse --short HEAD) \
@@ -83,7 +83,7 @@ done
 ### 3. Push images
 
 ```bash
-for service in api-gateway orchestrator runtime-manager browser-service review-service dashboard; do
+for service in api-gateway mission-service runtime-manager browser-service review-service dashboard; do
   docker push ${REGISTRY}/${service}:$(git rev-parse --short HEAD)
   docker push ${REGISTRY}/${service}:latest
 done
@@ -181,7 +181,7 @@ curl http://localhost:3000/health
 
 # Check aggregated health (gateway checks all downstream services)
 curl http://localhost:3000/health/all
-# Expected: {"api-gateway":"ok","orchestrator":"ok","runtime-manager":"ok",...}
+# Expected: {"api-gateway":"ok","mission-service":"ok","runtime-manager":"ok",...}
 ```
 
 ### Health check details
@@ -189,7 +189,7 @@ curl http://localhost:3000/health/all
 | Service          | Endpoint     | Checks                                    |
 | ---------------- | ------------ | ----------------------------------------- |
 | API Gateway      | `/health`    | Self, downstream service connectivity     |
-| Orchestrator     | `/health`    | Self, DB connection, NATS connection       |
+| Mission Service     | `/health`    | Self, DB connection, NATS connection       |
 | Runtime Manager  | `/health`    | Self, DB connection, NATS connection       |
 | Browser Service  | `/health`    | Self, Playwright browser launch            |
 | Review Service   | `/health`    | Self, DB connection                        |
@@ -201,16 +201,16 @@ curl http://localhost:3000/health/all
 
 ```bash
 # Check rollout history
-kubectl rollout history deployment/orchestrator -n clab-platform
+kubectl rollout history deployment/mission-service -n clab-platform
 
 # Roll back to previous revision
-kubectl rollout undo deployment/orchestrator -n clab-platform
+kubectl rollout undo deployment/mission-service -n clab-platform
 
 # Roll back to a specific revision
-kubectl rollout undo deployment/orchestrator -n clab-platform --to-revision=3
+kubectl rollout undo deployment/mission-service -n clab-platform --to-revision=3
 
 # Verify
-kubectl rollout status deployment/orchestrator -n clab-platform
+kubectl rollout status deployment/mission-service -n clab-platform
 ```
 
 ### Rolling back a database migration
@@ -219,7 +219,7 @@ Database rollbacks are not automatic. If a migration causes issues:
 
 1. **Stop affected services** to prevent further writes:
    ```bash
-   kubectl scale deployment/orchestrator --replicas=0 -n clab-platform
+   kubectl scale deployment/mission-service --replicas=0 -n clab-platform
    kubectl scale deployment/runtime-manager --replicas=0 -n clab-platform
    ```
 
@@ -232,14 +232,14 @@ Database rollbacks are not automatic. If a migration causes issues:
 
 3. **Redeploy previous image versions**:
    ```bash
-   kubectl set image deployment/orchestrator \
-     orchestrator=${REGISTRY}/orchestrator:<previous-tag> \
+   kubectl set image deployment/mission-service \
+     mission-service=${REGISTRY}/mission-service:<previous-tag> \
      -n clab-platform
    ```
 
 4. **Scale services back up**:
    ```bash
-   kubectl scale deployment/orchestrator --replicas=2 -n clab-platform
+   kubectl scale deployment/mission-service --replicas=2 -n clab-platform
    kubectl scale deployment/runtime-manager --replicas=2 -n clab-platform
    ```
 
@@ -249,7 +249,7 @@ If the entire release needs to be reverted:
 
 ```bash
 # Roll back all deployments
-for deploy in api-gateway orchestrator runtime-manager browser-service review-service dashboard; do
+for deploy in api-gateway mission-service runtime-manager browser-service review-service dashboard; do
   kubectl rollout undo deployment/${deploy} -n clab-platform
 done
 
@@ -265,5 +265,5 @@ kubectl get pods -n clab-platform -w
 - [ ] NATS streams exist and consumers are registered
 - [ ] Dashboard loads and shows real-time data
 - [ ] Create a test mission to verify end-to-end flow
-- [ ] Check logs for errors: `kubectl logs -l app=orchestrator -n clab-platform`
+- [ ] Check logs for errors: `kubectl logs -l app=mission-service -n clab-platform`
 - [ ] Verify metrics/monitoring dashboards are receiving data

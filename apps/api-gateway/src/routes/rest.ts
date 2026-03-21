@@ -9,25 +9,25 @@ const rest = new Hono();
 
 rest.post("/missions", async (c) => {
   const body = await c.req.json();
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "mission.create", body }, 201);
 });
 
 rest.get("/missions/:id", async (c) => {
   const { id } = c.req.param();
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "mission.get", missionId: id });
 });
 
 rest.post("/missions/:id/plan", async (c) => {
   const { id } = c.req.param();
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "mission.plan", missionId: id });
 });
 
 rest.post("/missions/:id/abort", async (c) => {
   const { id } = c.req.param();
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "mission.abort", missionId: id });
 });
 
@@ -60,13 +60,13 @@ rest.post("/tasks/:id/review", async (c) => {
 
 rest.get("/waves/:missionId", async (c) => {
   const { missionId } = c.req.param();
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "waves.list", missionId });
 });
 
 rest.post("/waves/:id/release", async (c) => {
   const { id } = c.req.param();
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "wave.release", waveId: id });
 });
 
@@ -98,7 +98,7 @@ rest.post("/sessions/:id/interrupt", async (c) => {
 
 rest.get("/artifacts/:missionId", async (c) => {
   const { missionId } = c.req.param();
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "artifacts.list", missionId });
 });
 
@@ -108,7 +108,7 @@ rest.get("/artifacts/:missionId", async (c) => {
 
 rest.get("/decisions/:missionId", async (c) => {
   const { missionId } = c.req.param();
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "decisions.list", missionId });
 });
 
@@ -117,14 +117,14 @@ rest.get("/decisions/:missionId", async (c) => {
 // ---------------------------------------------------------------------------
 
 rest.get("/approvals", async (c) => {
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "approvals.list" });
 });
 
 rest.post("/approvals/:id/resolve", async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
-  // TODO: delegate via ClabClient → orchestrator
+  // TODO: delegate via ClabClient → mission-service
   return c.json({ ok: true, action: "approval.resolve", approvalId: id, body });
 });
 
@@ -133,7 +133,7 @@ rest.post("/approvals/:id/resolve", async (c) => {
 // ---------------------------------------------------------------------------
 
 rest.get("/dashboard", async (c) => {
-  // TODO: delegate via ClabClient → orchestrator aggregate
+  // TODO: delegate via ClabClient → mission-service aggregate
   return c.json({ ok: true, action: "dashboard" });
 });
 

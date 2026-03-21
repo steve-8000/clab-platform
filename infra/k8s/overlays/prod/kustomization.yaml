@@ -30,7 +30,7 @@ patches:
 
   - target:
       kind: Deployment
-      name: orchestrator
+      name: mission-service
     patch: |
       - op: replace
         path: /spec/replicas
@@ -150,7 +150,7 @@ patches:
   # --- Production environment ---
   - target:
       kind: ConfigMap
-      name: orchestrator-config
+      name: mission-service-config
     patch: |
       - op: replace
         path: /data/LOG_LEVEL

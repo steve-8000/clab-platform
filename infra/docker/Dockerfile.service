@@ -1,6 +1,6 @@
 # ============================================================================
 # Dockerfile.service — Multi-stage build for clab Node.js micro-services
-# Usage:  docker build --build-arg SERVICE_NAME=orchestrator -f Dockerfile.service .
+# Usage:  docker build --build-arg SERVICE_NAME=mission-service -f Dockerfile.service .
 # ============================================================================
 
 ARG NODE_VERSION=22
@@ -24,7 +24,7 @@ COPY packages/shared/package.json           ./packages/shared/
 COPY packages/db/package.json               ./packages/db/
 COPY packages/events/package.json           ./packages/events/
 COPY packages/api-gateway/package.json      ./packages/api-gateway/
-COPY packages/orchestrator/package.json     ./packages/orchestrator/
+COPY packages/mission-service/package.json  ./packages/mission-service/
 COPY packages/runtime-manager/package.json  ./packages/runtime-manager/
 COPY packages/worker-codex/package.json     ./packages/worker-codex/
 COPY packages/worker-claude/package.json    ./packages/worker-claude/

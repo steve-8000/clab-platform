@@ -1,0 +1,29 @@
+{
+  "name": "@clab/knowledge-service",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "hono": "^4.7",
+    "@hono/node-server": "^1.13",
+    "@clab/domain": "workspace:*",
+    "@clab/db": "workspace:*",
+    "@clab/events": "workspace:*",
+    "@clab/knowledge": "workspace:*",
+    "@clab/telemetry": "workspace:*",
+    "drizzle-orm": "^0.38",
+    "zod": "^3.24"
+  },
+  "devDependencies": {
+    "typescript": "^5.7",
+    "tsx": "^4.19",
+    "@types/node": "^22"
+  }
+}

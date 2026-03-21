@@ -44,6 +44,7 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
 export const TaskRunStatus = z.enum([
   "STARTING",
   "RUNNING",
+  "AWAITING_INPUT",
   "SUCCEEDED",
   "FAILED",
   "TIMED_OUT",
@@ -56,6 +57,7 @@ export const SessionState = z.enum([
   "IDLE",
   "BOUND",
   "RUNNING",
+  "AWAITING_INPUT",
   "STALE",
   "LOST",
   "CLOSED",
@@ -119,3 +121,30 @@ export type ApprovalStatus = z.infer<typeof ApprovalStatus>;
 // --- RiskLevel ---
 export const RiskLevel = z.enum(["LOW", "MEDIUM", "HIGH"]);
 export type RiskLevel = z.infer<typeof RiskLevel>;
+
+// --- MessageStatus (session-centric) ---
+export const MessageStatusSchema = z.enum(["streaming", "done", "error", "awaiting_input", "interrupted"]);
+export type MessageStatus = z.infer<typeof MessageStatusSchema>;
+
+// --- RoleStatus (session-centric) ---
+export const RoleStatusSchema = z.enum(["idle", "working", "awaiting_input", "done"]);
+export type RoleStatus = z.infer<typeof RoleStatusSchema>;
+
+// --- ActivityEventType ---
+export const ActivityEventTypeSchema = z.enum([
+  "msg:start", "msg:done", "msg:error", "msg:awaiting_input",
+  "text", "thinking", "tool:start", "tool:result",
+  "dispatch:start", "dispatch:done",
+  "turn:warning", "turn:limit",
+  "prompt:assembled", "trace:response",
+  "knowledge:pre_k", "knowledge:post_k",
+]);
+export type ActivityEventType = z.infer<typeof ActivityEventTypeSchema>;
+
+// --- KnowledgeSource ---
+export const KnowledgeSourceSchema = z.enum(["MANUAL", "EXTRACTED", "DISTILLED", "IMPORTED"]);
+export type KnowledgeSource = z.infer<typeof KnowledgeSourceSchema>;
+
+// --- AuthorityLevel ---
+export const AuthorityLevelSchema = z.enum(["c_level", "manager", "individual"]);
+export type AuthorityLevel = z.infer<typeof AuthorityLevelSchema>;

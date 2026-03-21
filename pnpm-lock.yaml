@@ -117,7 +117,47 @@ importers:
         specifier: ^5.7
         version: 5.9.3
 
-  apps/orchestrator:
+  apps/knowledge-service:
+    dependencies:
+      '@clab/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@clab/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@clab/events':
+        specifier: workspace:*
+        version: link:../../packages/events
+      '@clab/knowledge':
+        specifier: workspace:*
+        version: link:../../packages/knowledge
+      '@clab/telemetry':
+        specifier: workspace:*
+        version: link:../../packages/telemetry
+      '@hono/node-server':
+        specifier: ^1.13
+        version: 1.19.11(hono@4.12.8)
+      drizzle-orm:
+        specifier: ^0.38
+        version: 0.38.4(@opentelemetry/api@1.9.0)(@types/react@19.2.14)(postgres@3.4.8)(react@19.2.4)
+      hono:
+        specifier: ^4.7
+        version: 4.12.8
+      zod:
+        specifier: ^3.24
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
+      tsx:
+        specifier: ^4.19
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+
+  apps/mission-service:
     dependencies:
       '@clab/db':
         specifier: workspace:*
@@ -461,6 +501,22 @@ importers:
         specifier: ^5.7
         version: 5.9.3
 
+  packages/prompt-assembly:
+    dependencies:
+      '@clab/domain':
+        specifier: workspace:*
+        version: link:../domain
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/prompts:
     dependencies:
       zod:
@@ -471,6 +527,41 @@ importers:
         specifier: ^5.7
         version: 5.9.3
 
+  packages/role-catalog:
+    dependencies:
+      '@clab/domain':
+        specifier: workspace:*
+        version: link:../domain
+      yaml:
+        specifier: ^2.7
+        version: 2.8.3
+      zod:
+        specifier: ^3.24
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+
+  packages/runtime-contracts:
+    dependencies:
+      '@clab/domain':
+        specifier: workspace:*
+        version: link:../domain
+      zod:
+        specifier: '*'
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: '*'
+        version: 22.19.15
+      typescript:
+        specifier: '*'
+        version: 5.9.3
+
   packages/sdk:
     dependencies:
       '@clab/domain':
@@ -479,6 +570,25 @@ importers:
     devDependencies:
       '@types/node':
         specifier: '22'
+        version: 22.19.15
+      typescript:
+        specifier: ^5.7
+        version: 5.9.3
+
+  packages/skill-engine:
+    dependencies:
+      '@clab/domain':
+        specifier: workspace:*
+        version: link:../domain
+      yaml:
+        specifier: ^2.7
+        version: 2.8.3
+      zod:
+        specifier: ^3.23
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22
         version: 22.19.15
       typescript:
         specifier: ^5.7
@@ -513,6 +623,25 @@ importers:
     devDependencies:
       typescript:
         specifier: ^5.7
+        version: 5.9.3
+
+  packages/tool-adapters:
+    dependencies:
+      '@clab/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@clab/runtime-contracts':
+        specifier: workspace:*
+        version: link:../runtime-contracts
+      zod:
+        specifier: '*'
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: '*'
+        version: 22.19.15
+      typescript:
+        specifier: '*'
         version: 5.9.3
 
 packages:
@@ -2019,6 +2148,11 @@ packages:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
     engines: {node: '>=10'}
 
+  yaml@2.8.3:
+    resolution: {integrity: sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yargs-parser@21.1.1:
     resolution: {integrity: sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==}
     engines: {node: '>=12'}
@@ -3247,6 +3381,8 @@ snapshots:
       strip-ansi: 6.0.1
 
   y18n@5.0.8: {}
+
+  yaml@2.8.3: {}
 
   yargs-parser@21.1.1: {}
 

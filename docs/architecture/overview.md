@@ -18,7 +18,7 @@
                            |                               |
                     REST   v                        REST   v
               +------------+--------+        +-------------+---------+
-              |    Orchestrator     |        |   Review Service       |
+              |   Mission Service   |        |   Review Service       |
               | (Mission Planning)  |        | (Quality Gate)         |
               +------------+--------+        +-------------+---------+
                            |                               ^
@@ -59,7 +59,7 @@ The single entry point for all external requests. Built with Hono, it handles:
 
 All client interactions (CLI, web dashboard, API consumers) go through this gateway.
 
-### Orchestrator
+### Mission Service
 
 The brain of the platform. Responsible for:
 
@@ -69,7 +69,7 @@ The brain of the platform. Responsible for:
 - **Progress tracking** — monitors task completions and triggers subsequent waves
 - **Failure handling** — decides whether to retry, skip, or abort on task failure
 
-The orchestrator does not execute any tasks itself. It purely coordinates.
+The mission service does not execute any tasks itself. It purely coordinates.
 
 ### Runtime Manager
 
@@ -109,7 +109,7 @@ Quality gate that validates task outputs before marking them complete:
 - **Artifact review** — checks generated code, files, and outputs against acceptance criteria
 - **Automated checks** — runs linting, type-checking, test suites on produced artifacts
 - **Human-in-the-loop** — can pause for manual review when confidence is low
-- **Approval/rejection** — feeds results back to the orchestrator for next-step decisions
+- **Approval/rejection** — feeds results back to the mission service for next-step decisions
 
 ### Dashboard
 
@@ -127,7 +127,7 @@ Real-time web interface for monitoring and control:
 User Request
     |
     v
-[API Gateway] -- POST /missions --> [Orchestrator]
+[API Gateway] -- POST /missions --> [Mission Service]
     |                                      |
     |                               Creates Mission
     |                               Generates Plan
@@ -149,7 +149,7 @@ User Request
     |                              approve / reject
     |                                      |
     |                                      v
-    |                              [Orchestrator]
+    |                              [Mission Service]
     |                              Wave 1 complete?
     |                              Schedule Wave 2...
     |                                      |
@@ -163,14 +163,14 @@ User Request
 
 ### Step-by-step
 
-1. **User submits a request** via CLI or dashboard. The API gateway routes it to the orchestrator.
-2. **Orchestrator creates a Mission** record in PostgreSQL and generates a Plan.
+1. **User submits a request** via CLI or dashboard. The API gateway routes it to the mission service.
+2. **Mission service creates a Mission** record in PostgreSQL and generates a Plan.
 3. **Plan is decomposed into Waves**, each containing parallelizable Tasks.
-4. **Wave 1 is scheduled**. The orchestrator notifies the runtime manager.
+4. **Wave 1 is scheduled**. The mission service notifies the runtime manager.
 5. **Runtime manager provisions workers** (Codex sessions) and dispatches tasks.
 6. **Workers execute tasks** autonomously, producing artifacts and status updates.
 7. **Review service validates outputs** against acceptance criteria.
-8. **Orchestrator receives results**, marks tasks complete/failed, and decides next steps.
+8. **Mission service receives results**, marks tasks complete/failed, and decides next steps.
 9. **If the wave is complete**, the next wave is scheduled. Repeat until all waves done.
 10. **Mission is marked COMPLETED** (or FAILED if unrecoverable).
 11. **Throughout this process**, NATS events are emitted and the dashboard updates in real-time.
@@ -183,9 +183,9 @@ Used for **service-to-service commands** where an immediate response is needed:
 
 | Route                          | From              | To               | Purpose                     |
 | ------------------------------ | ----------------- | ---------------- | --------------------------- |
-| `POST /missions`               | API Gateway       | Orchestrator     | Create new mission          |
-| `POST /tasks/:id/dispatch`     | Orchestrator      | Runtime Manager  | Dispatch task to worker     |
-| `POST /tasks/:id/result`       | Runtime Manager   | Orchestrator     | Report task completion      |
+| `POST /missions`               | API Gateway       | Mission Service  | Create new mission          |
+| `POST /tasks/:id/dispatch`     | Mission Service   | Runtime Manager  | Dispatch task to worker     |
+| `POST /tasks/:id/result`       | Runtime Manager   | Mission Service  | Report task completion      |
 | `POST /reviews`                | Runtime Manager   | Review Service   | Submit artifact for review  |
 | `GET /health`                  | API Gateway       | All services     | Health check aggregation    |
 
@@ -195,15 +195,15 @@ Used for **events and notifications** where decoupling is essential:
 
 | Subject                        | Publisher         | Subscribers              | Purpose                        |
 | ------------------------------ | ----------------- | ------------------------ | ------------------------------ |
-| `mission.created`              | Orchestrator      | Dashboard, Audit         | New mission notification       |
-| `mission.completed`            | Orchestrator      | Dashboard, Notifications | Mission done                   |
-| `wave.started`                 | Orchestrator      | Dashboard, Runtime Mgr   | Wave execution begins          |
+| `mission.created`              | Mission Service   | Dashboard, Audit         | New mission notification       |
+| `mission.completed`            | Mission Service   | Dashboard, Notifications | Mission done                   |
+| `wave.started`                 | Mission Service   | Dashboard, Runtime Mgr   | Wave execution begins          |
 | `task.dispatched`              | Runtime Manager   | Dashboard                | Task sent to worker            |
-| `task.completed`               | Runtime Manager   | Orchestrator, Dashboard  | Task finished                  |
-| `task.failed`                  | Runtime Manager   | Orchestrator, Dashboard  | Task errored                   |
+| `task.completed`               | Runtime Manager   | Mission Service, Dashboard | Task finished                  |
+| `task.failed`                  | Runtime Manager   | Mission Service, Dashboard | Task errored                   |
 | `session.heartbeat`            | Workers           | Runtime Manager          | Worker alive signal            |
-| `review.approved`              | Review Service    | Orchestrator             | Artifact passed review         |
-| `review.rejected`              | Review Service    | Orchestrator             | Artifact failed review         |
+| `review.approved`              | Review Service    | Mission Service          | Artifact passed review         |
+| `review.rejected`              | Review Service    | Mission Service          | Artifact failed review         |
 
 ### WebSocket (Real-time, Bidirectional)
 
@@ -231,7 +231,7 @@ See [Domain Model](./domain-model.md) for the full entity relationship diagram.
 clab v1 was a monolithic MCP server. As capabilities grew, we hit pain points:
 
 - **Deployment coupling** — a change to browser logic required redeploying everything
-- **Scaling constraints** — couldn't scale workers independently from the orchestrator
+- **Scaling constraints** — couldn't scale workers independently from the mission service
 - **Blast radius** — a crash in one subsystem took down the whole process
 
 Microservices let each component evolve, scale, and fail independently. The trade-off is operational complexity, mitigated by shared packages and a monorepo structure.

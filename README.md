@@ -13,7 +13,7 @@ User Request → Mission → Plan → Waves → Tasks → Agent Sessions → Art
 │                    api-gateway :4000                     │
 │              REST / WebSocket / MCP                      │
 ├─────────────┬───────────────────────┬───────────────────┤
-│ orchestrator│   runtime-manager     │  review-service   │
+│mission-service│  runtime-manager     │  review-service   │
 │    :4001    │       :4002           │     :4006         │
 ├─────────────┼───────────┬───────────┼───────────────────┤
 │             │worker-codex│worker-claude│ browser-service │
@@ -78,7 +78,7 @@ pnpm dev
 clab-platform/
 ├── apps/
 │   ├── api-gateway/          # REST/WS/MCP facade       :4000
-│   ├── orchestrator/         # Mission planner, scheduler :4001
+│   ├── mission-service/      # Mission planner, scheduler :4001
 │   ├── runtime-manager/      # Session binding, cmux     :4002
 │   ├── worker-codex/         # Codex execution worker    :4003
 │   ├── worker-claude/        # Claude CLI worker         :4004
@@ -116,7 +116,7 @@ clab-platform/
 | Service | Port | Role |
 |---------|------|------|
 | api-gateway | 4000 | External entry point |
-| orchestrator | 4001 | Mission planning, wave scheduling |
+| mission-service | 4001 | Mission planning, wave scheduling |
 | runtime-manager | 4002 | Session lifecycle, cmux control |
 | worker-codex | 4003 | Codex task execution |
 | worker-claude | 4004 | Claude CLI execution |
@@ -128,7 +128,7 @@ clab-platform/
 
 | Role | Engine | Responsibility |
 |------|--------|---------------|
-| Orchestrator | Claude (main) | Coordination, decisions |
+| Mission-Service | Claude (main) | Coordination, decisions |
 | Builder | Codex | Coding, tests, bug fixes |
 | Architect | Codex | Technical design |
 | PM | Claude CLI | Task decomposition |
