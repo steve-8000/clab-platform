@@ -9,39 +9,49 @@ User Request → Mission → Plan → Waves → Tasks → Agent Sessions → Art
 ## Quick Start
 
 ```bash
-# Clone
+# 1. Install prerequisites (user responsibility)
+#    - Node.js >= 22     : https://nodejs.org or nvm install 22
+#    - pnpm >= 9.15      : corepack enable && corepack prepare pnpm@9.15.4 --activate
+#    - tmux              : brew install tmux (macOS) / apt install tmux (Linux)
+#    - Claude Code CLI   : curl -fsSL https://claude.ai/install.sh | sh
+#    - Codex CLI         : npm install -g @openai/codex
+#    - Docker (optional) : https://docs.docker.com/get-docker/
+
+# 2. Clone & setup
 git clone https://github.com/steve-8000/clab-platform.git
 cd clab-platform
+./scripts/setup.sh    # installs deps, creates .env, registers clab plugin
 
-# Automated setup (installs Claude Code, Codex, deps, registers plugin)
-./scripts/setup.sh
-
-# Or manual setup — see below
+# 3. Reload shell & start
+source ~/.zshrc
 ```
 
-## Setup (Manual)
+## Prerequisites
 
-### 1. Prerequisites
+Install these **before** running `setup.sh`:
 
 | Tool | Version | Install |
 |------|---------|---------|
 | Node.js | >= 22 | https://nodejs.org or `nvm install 22` |
 | pnpm | >= 9.15 | `corepack enable && corepack prepare pnpm@9.15.4 --activate` |
 | tmux | any | `brew install tmux` (macOS) / `apt install tmux` (Linux) |
+| Claude Code CLI | latest | `curl -fsSL https://claude.ai/install.sh \| sh` or `npm install -g @anthropic-ai/claude-code` |
+| Codex CLI | latest | `npm install -g @openai/codex` |
 | Docker | any | https://docs.docker.com/get-docker/ (optional, for containers) |
 
-### 2. Install Claude Code + Codex
+## What `setup.sh` Does
 
-```bash
-# Claude Code CLI
-curl -fsSL https://claude.ai/install.sh | sh    # macOS
-# or: npm install -g @anthropic-ai/claude-code
+1. Verifies all prerequisites are installed
+2. `pnpm install` — installs project dependencies
+3. Creates `.env` from `.env.example`
+4. Adds `CLAUDE_PLUGIN_ROOT` to your shell profile (`~/.zshrc` / `~/.bashrc`)
+5. Registers the clab plugin in `~/.claude/settings.json`
 
-# Codex CLI
-npm install -g @openai/codex
-```
+After setup, `claude` works from **any directory** with the clab plugin loaded.
 
-### 3. Install Dependencies & Configure
+## Manual Setup
+
+### 1. Install Dependencies & Configure
 
 ```bash
 pnpm install
@@ -52,7 +62,7 @@ cp .env.example .env
 # OPENAI_API_KEY=sk-xxxxx
 ```
 
-### 4. Register clab Plugin in Claude Code
+### 2. Register clab Plugin in Claude Code
 
 The clab plugin connects Claude Code to this platform via MCP (36 tools: codex dispatch, wave orchestration, browser automation, AKB knowledge, etc).
 

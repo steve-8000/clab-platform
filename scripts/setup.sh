@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
-# clab-platform setup — Install Claude Code, Codex CLI, cmux, and clab plugin
+# clab-platform setup — Configure deps, env, and clab plugin registration
+# Prerequisites: Node.js 22+, Claude Code CLI, Codex CLI, tmux
 # Usage: ./scripts/setup.sh
 # ============================================================================
 set -euo pipefail
@@ -39,41 +40,20 @@ check_prereqs() {
     error "tmux is required. Install it and re-run this script."
   }
 
+  command -v claude >/dev/null 2>&1 || {
+    error "Claude Code CLI not found. Install first:
+    macOS:  curl -fsSL https://claude.ai/install.sh | sh
+    npm:    npm install -g @anthropic-ai/claude-code"
+  }
+
+  command -v codex >/dev/null 2>&1 || {
+    error "Codex CLI not found. Install first:
+    npm install -g @openai/codex"
+  }
+
   command -v docker >/dev/null 2>&1 || warn "Docker not found — needed for container builds (optional for local dev)"
 
-  info "Prerequisites OK (Node $(node -v), pnpm $(pnpm -v), tmux $(tmux -V))"
-}
-
-# ── Claude Code CLI ────────────────────────────────────────────────────────
-install_claude() {
-  if command -v claude >/dev/null 2>&1; then
-    info "Claude Code CLI already installed: $(claude --version 2>/dev/null || echo 'unknown version')"
-    return
-  fi
-
-  info "Installing Claude Code CLI..."
-  if [[ "$(uname)" == "Darwin" ]]; then
-    # Native installer (recommended)
-    curl -fsSL https://claude.ai/install.sh | sh
-  else
-    npm install -g @anthropic-ai/claude-code
-  fi
-
-  command -v claude >/dev/null 2>&1 || error "Claude Code installation failed"
-  info "Claude Code CLI installed: $(claude --version 2>/dev/null)"
-}
-
-# ── Codex CLI ──────────────────────────────────────────────────────────────
-install_codex() {
-  if command -v codex >/dev/null 2>&1; then
-    info "Codex CLI already installed"
-    return
-  fi
-
-  info "Installing OpenAI Codex CLI..."
-  npm install -g @openai/codex
-  command -v codex >/dev/null 2>&1 || error "Codex CLI installation failed"
-  info "Codex CLI installed"
+  info "Prerequisites OK (Node $(node -v), pnpm $(pnpm -v), tmux $(tmux -V), claude, codex)"
 }
 
 # ── clab plugin ────────────────────────────────────────────────────────────
@@ -235,8 +215,6 @@ main() {
   echo ""
 
   check_prereqs
-  install_claude
-  install_codex
   install_deps
   create_env
   setup_clab_plugin
