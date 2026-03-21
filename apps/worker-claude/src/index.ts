@@ -43,5 +43,10 @@ async function startNatsSubscriber() {
 
 serve({ fetch: app.fetch, port }, () => {
   console.log(`Worker-Claude listening on port ${port}`);
-  startNatsSubscriber();
+  const executionMode = process.env.EXECUTION_MODE || "k8s";
+  if (executionMode === "local") {
+    console.log("[worker-claude] EXECUTION_MODE=local — NATS subscribe disabled (clab plugin handles execution)");
+  } else {
+    startNatsSubscriber();
+  }
 });
