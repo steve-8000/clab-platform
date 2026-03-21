@@ -30,8 +30,28 @@ rest.all("/missions/*", async (c) => {
   }
 });
 
+// Proxy /workspaces/* to mission-service
+rest.all("/workspaces/*", async (c) => {
+  const path = c.req.path.replace("/v1", "");
+  const url = `${MISSION_SERVICE_URL}/v1${path}`;
+  const init: RequestInit = {
+    method: c.req.method,
+    headers: { "Content-Type": "application/json" },
+  };
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    init.body = await c.req.text();
+  }
+  try {
+    const res = await fetch(url, init);
+    return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json" } });
+  } catch (err) {
+    return c.json({ error: "Mission service unavailable" }, 502);
+  }
+});
+
 // Dashboard aggregate endpoint
 rest.get("/dashboard", async (c) => {
+  const workspaceId = c.req.query("workspaceId");
   const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
 
   try {
@@ -39,13 +59,18 @@ rest.get("/dashboard", async (c) => {
     const missionsRes = await fetch(`${MISSION_SERVICE_URL}/v1/missions`);
     const allMissions = missionsRes.ok ? await missionsRes.json() as Array<Record<string, unknown>> : [];
 
+    // Filter by workspaceId if provided
+    const filtered = workspaceId
+      ? allMissions.filter((m) => m.workspaceId === workspaceId)
+      : allMissions;
+
     // Fetch sessions
     const sessionsRes = await fetch(`${RUNTIME_URL}/sessions`);
     const allSessions = sessionsRes.ok ? await sessionsRes.json() as Array<Record<string, unknown>> : [];
 
-    const activeMissions = allMissions.filter((m) => m.status === "RUNNING").length;
-    const completedMissions = allMissions.filter((m) => m.status === "COMPLETED").length;
-    const failedMissions = allMissions.filter((m) => m.status === "FAILED").length;
+    const activeMissions = filtered.filter((m) => m.status === "RUNNING").length;
+    const completedMissions = filtered.filter((m) => m.status === "COMPLETED").length;
+    const failedMissions = filtered.filter((m) => m.status === "FAILED").length;
     const runningSessions = allSessions.filter((s) => s.state === "RUNNING").length;
     const staleSessions = allSessions.filter((s) => s.state === "STALE").length;
 
@@ -54,12 +79,12 @@ rest.get("/dashboard", async (c) => {
         activeMissions,
         completedMissions,
         failedMissions,
-        totalMissions: allMissions.length,
+        totalMissions: filtered.length,
         runningSessions,
         staleSessions,
         totalSessions: allSessions.length,
       },
-      recentMissions: allMissions.slice(-10).reverse(),
+      recentMissions: filtered.slice(-10).reverse(),
       activeSessions: allSessions.filter((s) => s.state !== "CLOSED"),
     });
   } catch (err) {

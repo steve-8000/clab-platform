@@ -17,7 +17,7 @@ export async function startSessionManager(): Promise<void> {
     console.log("[runtime-manager] Connected to NATS");
 
     // Subscribe to task.assigned — provision session for each task
-    const sub = nc.subscribe("clab.task.assigned");
+    const sub = nc.subscribe("clab.*.task.assigned");
 
     (async () => {
       for await (const msg of sub) {
@@ -31,7 +31,7 @@ export async function startSessionManager(): Promise<void> {
     })();
 
     // Subscribe to task.completed — close session
-    const completeSub = nc.subscribe("clab.task.completed");
+    const completeSub = nc.subscribe("clab.*.task.completed");
 
     (async () => {
       for await (const msg of completeSub) {

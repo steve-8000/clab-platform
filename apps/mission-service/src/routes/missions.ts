@@ -178,9 +178,13 @@ missionRoutes.post("/:id/start", async (c) => {
     await db.update(tasks).set({ status: "ASSIGNED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
   }
 
+    // Resolve workspaceId for NATS subject scoping
+    const [missionData] = await db.select().from(missions).where(eq(missions.id, id));
+    const wsId = missionData?.workspaceId || "default";
+
     // Emit events for each assigned task
     for (const task of missionTasks) {
-      await publishEvent("clab.task.assigned", {
+      await publishEvent(`clab.${wsId}.task.assigned`, {
         taskId: task.id,
         missionId: id,
         waveId: task.waveId,
@@ -188,6 +192,7 @@ missionRoutes.post("/:id/start", async (c) => {
         engine: task.engine,
         title: task.title,
         description: task.description,
+        workspaceId: wsId,
       });
     }
 

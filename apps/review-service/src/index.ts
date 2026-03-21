@@ -11,7 +11,7 @@ async function startNatsSubscriber() {
     const nc = await connect({ servers: NATS_URL });
     console.log("[review-service] Connected to NATS");
 
-    const sub = nc.subscribe("clab.task.completed");
+    const sub = nc.subscribe("clab.*.task.completed");
 
     (async () => {
       for await (const msg of sub) {
@@ -22,7 +22,7 @@ async function startNatsSubscriber() {
           const result = await reviewTask(data.taskId as string);
 
           // Publish review result
-          nc.publish("clab.review.completed", jc.encode({
+          nc.publish(`clab.${data.workspaceId || "*"}.review.completed`, jc.encode({
             taskId: data.taskId,
             missionId: data.missionId,
             passed: result.passed,

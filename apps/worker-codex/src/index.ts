@@ -11,7 +11,7 @@ async function startNatsSubscriber() {
     const nc = await connect({ servers: NATS_URL });
     console.log("[worker-codex] Connected to NATS");
 
-    const sub = nc.subscribe("clab.task.assigned");
+    const sub = nc.subscribe("clab.*.task.assigned");
 
     (async () => {
       for await (const msg of sub) {
@@ -26,10 +26,11 @@ async function startNatsSubscriber() {
           await executeTask(data.taskId as string);
 
           // Publish completion event
-          nc.publish("clab.task.completed", jc.encode({
+          nc.publish(`clab.${data.workspaceId || "*"}.task.completed`, jc.encode({
             taskId: data.taskId,
             missionId: data.missionId,
             waveId: data.waveId,
+            workspaceId: data.workspaceId,
             status: "SUCCEEDED",
           }));
         } catch (err) {
