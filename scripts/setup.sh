@@ -67,7 +67,7 @@ setup_clab_plugin() {
 
   info "Setting up clab plugin..."
 
-  # Set CLAUDE_PLUGIN_ROOT in shell profile
+  # Set CLAB_API_URL in shell profile
   local SHELL_RC
   if [[ -f "$HOME/.zshrc" ]]; then
     SHELL_RC="$HOME/.zshrc"
@@ -77,34 +77,33 @@ setup_clab_plugin() {
     SHELL_RC="$HOME/.profile"
   fi
 
-  if ! grep -q "CLAUDE_PLUGIN_ROOT" "$SHELL_RC" 2>/dev/null; then
-    echo "" >> "$SHELL_RC"
-    echo "# clab-platform: Claude plugin root" >> "$SHELL_RC"
-    echo "export CLAUDE_PLUGIN_ROOT=\"${REPO_ROOT}\"" >> "$SHELL_RC"
-    info "Added CLAUDE_PLUGIN_ROOT to $SHELL_RC"
-  else
-    # Update existing value
-    if [[ "$(uname)" == "Darwin" ]]; then
-      sed -i '' "s|export CLAUDE_PLUGIN_ROOT=.*|export CLAUDE_PLUGIN_ROOT=\"${REPO_ROOT}\"|" "$SHELL_RC"
-    else
-      sed -i "s|export CLAUDE_PLUGIN_ROOT=.*|export CLAUDE_PLUGIN_ROOT=\"${REPO_ROOT}\"|" "$SHELL_RC"
-    fi
-    info "Updated CLAUDE_PLUGIN_ROOT in $SHELL_RC"
-  fi
-
-  export CLAUDE_PLUGIN_ROOT="${REPO_ROOT}"
-
-  # Set CLAB_API_URL if not already present
   if ! grep -q "CLAB_API_URL" "$SHELL_RC" 2>/dev/null; then
+    echo "" >> "$SHELL_RC"
+    echo "# clab-platform: K8s state sync" >> "$SHELL_RC"
     echo "export CLAB_API_URL=https://ai.clab.one" >> "$SHELL_RC"
-    info "Added CLAB_API_URL to $SHELL_RC (platform state sync)"
+    info "Added CLAB_API_URL to $SHELL_RC"
   fi
 
-  # Build the MCP server if src exists
-  if [[ -f "${REPO_ROOT}/src/mcp/server.ts" ]]; then
-    info "Building MCP server..."
-    cd "$REPO_ROOT" && pnpm install && pnpm build
-  fi
+  # Register MCP server globally (~/.claude/mcp.json)
+  local MCP_CONFIG="$HOME/.claude/mcp.json"
+  mkdir -p "$HOME/.claude"
+
+  info "Registering clab-cmux MCP server globally..."
+  python3 -c "
+import json, os
+p = '$MCP_CONFIG'
+d = {}
+if os.path.exists(p):
+    with open(p) as f: d = json.load(f)
+d.setdefault('mcpServers', {})['clab-cmux'] = {
+    'command': 'node',
+    'args': ['${REPO_ROOT}/dist/mcp/server.js'],
+    'cwd': '${REPO_ROOT}'
+}
+with open(p, 'w') as f: json.dump(d, f, indent=2)
+print('done')
+"
+  info "MCP server registered at $MCP_CONFIG (path: ${REPO_ROOT})"
 
   # Register plugin in Claude Code settings
   local CLAUDE_SETTINGS="$HOME/.claude/settings.json"
