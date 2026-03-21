@@ -74,6 +74,17 @@ rest.get("/dashboard", async (c) => {
     const runningSessions = allSessions.filter((s) => s.state === "RUNNING").length;
     const staleSessions = allSessions.filter((s) => s.state === "STALE").length;
 
+    // Fetch knowledge stats
+    const KNOWLEDGE_SVC = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
+    let knowledgeStats = { totalEntries: 0, topics: 0 };
+    try {
+      const kbRes = await fetch(`${KNOWLEDGE_SVC}/v1/knowledge/status`, { signal: AbortSignal.timeout(3000) });
+      if (kbRes.ok) {
+        const kbData = await kbRes.json() as Record<string, unknown>;
+        knowledgeStats = { totalEntries: kbData.totalEntries as number ?? 0, topics: kbData.topics as number ?? 0 };
+      }
+    } catch {}
+
     return c.json({
       stats: {
         activeMissions,
@@ -83,6 +94,8 @@ rest.get("/dashboard", async (c) => {
         runningSessions,
         staleSessions,
         totalSessions: allSessions.length,
+        knowledgeEntries: knowledgeStats.totalEntries,
+        knowledgeTopics: knowledgeStats.topics,
       },
       recentMissions: filtered.slice(-10).reverse(),
       activeSessions: allSessions.filter((s) => s.state !== "CLOSED"),
@@ -116,6 +129,27 @@ rest.get("/approvals", async (c) => {
     return c.json([]);
   } catch {
     return c.json([]);
+  }
+});
+
+// Proxy /knowledge/* to knowledge-service
+const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
+rest.all("/knowledge/*", async (c) => {
+  const path = c.req.path.replace("/v1", "");
+  const qs = c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : "";
+  const url = `${KNOWLEDGE_URL}/v1${path}${qs}`;
+  const init: RequestInit = {
+    method: c.req.method,
+    headers: { "Content-Type": "application/json" },
+  };
+  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    init.body = await c.req.text();
+  }
+  try {
+    const res = await fetch(url, init);
+    return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json" } });
+  } catch (err) {
+    return c.json({ error: "Knowledge service unavailable", detail: String(err) }, 502);
   }
 });
 
