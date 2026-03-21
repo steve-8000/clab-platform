@@ -1,0 +1,62 @@
+# ============================================================================
+# Dockerfile.dashboard — Multi-stage build for the Next.js dashboard
+# ============================================================================
+
+ARG NODE_VERSION=22
+
+# ---------------------------------------------------------------------------
+# Stage 1 — Base
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS base
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+WORKDIR /app
+
+# ---------------------------------------------------------------------------
+# Stage 2 — Dependencies
+# ---------------------------------------------------------------------------
+FROM base AS deps
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY packages/shared/package.json     ./packages/shared/
+COPY packages/dashboard/package.json  ./packages/dashboard/
+
+RUN pnpm install --frozen-lockfile --prod=false
+
+# ---------------------------------------------------------------------------
+# Stage 3 — Build
+# ---------------------------------------------------------------------------
+FROM base AS builder
+
+ENV NEXT_TELEMETRY_DISABLED=1
+
+COPY --from=deps /app/node_modules         ./node_modules
+COPY --from=deps /app/packages/*/node_modules ./packages/
+COPY . .
+
+RUN pnpm --filter "./packages/shared" build \
+ && pnpm --filter "./packages/dashboard" build
+
+# ---------------------------------------------------------------------------
+# Stage 4 — Production runner (standalone Next.js output)
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS runner
+
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0
+
+RUN addgroup -S clab && adduser -S clab -G clab
+WORKDIR /app
+
+COPY --from=builder /app/packages/dashboard/public ./public
+COPY --from=builder /app/packages/dashboard/.next/standalone ./
+COPY --from=builder /app/packages/dashboard/.next/static ./.next/static
+
+USER clab
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- http://localhost:3000/api/health || exit 1
+
+CMD ["node", "server.js"]

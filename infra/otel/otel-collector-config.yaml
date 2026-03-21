@@ -1,0 +1,128 @@
+# ============================================================================
+# OpenTelemetry Collector Configuration — clab-platform
+# ============================================================================
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Scrape Prometheus metrics from services that expose them
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: "otel-collector"
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["localhost:8888"]
+
+        - job_name: "nats"
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["nats:8222"]
+          metrics_path: /varz
+
+processors:
+  # Batch telemetry for efficiency
+  batch:
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+    timeout: 5s
+
+  # Add resource attributes
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: "${DEPLOYMENT_ENV:-dev}"
+        action: upsert
+      - key: service.namespace
+        value: clab-platform
+        action: upsert
+
+  # Memory limiter to prevent OOM
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Filter out noisy health-check spans
+  filter/healthcheck:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.target"] == "/healthz"'
+        - 'attributes["http.route"] == "/healthz"'
+        - 'attributes["url.path"] == "/healthz"'
+
+  # Tail-based sampling: keep errors and slow requests, sample normal traffic
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    policies:
+      - name: error-policy
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: latency-policy
+        type: latency
+        latency:
+          threshold_ms: 1000
+      - name: probabilistic-policy
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+exporters:
+  # Debug exporter for development
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+  # Prometheus exporter — scraped by Grafana
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: clab
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # OTLP exporter placeholder — send to Jaeger, Tempo, or Datadog
+  otlp/traces:
+    endpoint: "localhost:4317"
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+service:
+  extensions: [health_check, zpages]
+
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/healthcheck, tail_sampling, resource, batch]
+      exporters: [otlp/traces, debug]
+
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus, debug]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      address: 0.0.0.0:8888

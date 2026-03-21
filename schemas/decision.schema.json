@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clab.dev/schemas/decision.schema.json",
+  "title": "Decision",
+  "description": "An architectural or operational decision record captured during mission execution.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique decision identifier."
+    },
+    "missionId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Mission this decision belongs to."
+    },
+    "taskId": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Optional task that triggered this decision."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "description": "Short decision title."
+    },
+    "context": {
+      "type": "string",
+      "description": "Background context explaining why a decision was needed."
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "label": { "type": "string" },
+          "description": { "type": "string" },
+          "pros": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "cons": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "required": ["label"],
+        "additionalProperties": false
+      },
+      "description": "Evaluated options."
+    },
+    "chosen": {
+      "type": "string",
+      "description": "Label of the chosen option."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Explanation of why the chosen option was selected."
+    },
+    "consequences": {
+      "type": "string",
+      "description": "Expected consequences or trade-offs of the decision."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["proposed", "accepted", "rejected", "superseded", "deprecated"],
+      "default": "proposed",
+      "description": "Decision lifecycle status."
+    },
+    "decidedBy": {
+      "type": "string",
+      "description": "Actor (user or agent) who made the decision."
+    },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": ["id", "missionId", "title", "status", "createdAt", "updatedAt"],
+  "additionalProperties": false
+}

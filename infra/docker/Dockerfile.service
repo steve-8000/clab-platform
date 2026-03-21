@@ -1,0 +1,74 @@
+# ============================================================================
+# Dockerfile.service — Multi-stage build for clab Node.js micro-services
+# Usage:  docker build --build-arg SERVICE_NAME=orchestrator -f Dockerfile.service .
+# ============================================================================
+
+ARG NODE_VERSION=22
+
+# ---------------------------------------------------------------------------
+# Stage 1 — Base image with pnpm
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS base
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+WORKDIR /app
+
+# ---------------------------------------------------------------------------
+# Stage 2 — Install dependencies (cache-friendly layer)
+# ---------------------------------------------------------------------------
+FROM base AS deps
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+
+# Copy every workspace package.json so pnpm can resolve the lockfile
+COPY packages/shared/package.json           ./packages/shared/
+COPY packages/db/package.json               ./packages/db/
+COPY packages/events/package.json           ./packages/events/
+COPY packages/api-gateway/package.json      ./packages/api-gateway/
+COPY packages/orchestrator/package.json     ./packages/orchestrator/
+COPY packages/runtime-manager/package.json  ./packages/runtime-manager/
+COPY packages/worker-codex/package.json     ./packages/worker-codex/
+COPY packages/worker-claude/package.json    ./packages/worker-claude/
+COPY packages/browser-service/package.json  ./packages/browser-service/
+COPY packages/review-service/package.json   ./packages/review-service/
+
+RUN pnpm install --frozen-lockfile --prod=false
+
+# ---------------------------------------------------------------------------
+# Stage 3 — Build
+# ---------------------------------------------------------------------------
+FROM base AS builder
+
+ARG SERVICE_NAME
+
+COPY --from=deps /app/node_modules         ./node_modules
+COPY --from=deps /app/packages/*/node_modules ./packages/
+COPY . .
+
+RUN pnpm --filter "./packages/shared" build \
+ && pnpm --filter "./packages/${SERVICE_NAME}" build
+
+# ---------------------------------------------------------------------------
+# Stage 4 — Production runner
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS runner
+
+ARG SERVICE_NAME
+ENV NODE_ENV=production \
+    SERVICE_NAME=${SERVICE_NAME}
+
+RUN addgroup -S clab && adduser -S clab -G clab
+WORKDIR /app
+
+# Copy built output and production deps
+COPY --from=builder /app/packages/${SERVICE_NAME}/dist ./dist
+COPY --from=builder /app/packages/${SERVICE_NAME}/package.json ./package.json
+COPY --from=deps    /app/node_modules ./node_modules
+
+USER clab
+
+EXPOSE 4000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://localhost:4000/healthz || exit 1
+
+CMD ["node", "dist/index.js"]

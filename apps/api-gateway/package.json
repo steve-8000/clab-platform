@@ -1,0 +1,27 @@
+{
+  "name": "@clab/api-gateway",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "hono": "^4.7",
+    "@hono/node-server": "^1.13",
+    "@clab/domain": "workspace:*",
+    "@clab/sdk": "workspace:*",
+    "@clab/events": "workspace:*",
+    "@clab/mcp-contracts": "workspace:*",
+    "@clab/telemetry": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7",
+    "tsx": "^4.19",
+    "@types/node": "^22"
+  }
+}

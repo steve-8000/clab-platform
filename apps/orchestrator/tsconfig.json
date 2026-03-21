@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "src" },
+  "include": ["src"],
+  "references": [
+    { "path": "../../packages/domain" },
+    { "path": "../../packages/db" },
+    { "path": "../../packages/events" },
+    { "path": "../../packages/policy" },
+    { "path": "../../packages/prompts" },
+    { "path": "../../packages/telemetry" }
+  ]
+}
