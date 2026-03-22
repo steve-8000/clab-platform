@@ -202,7 +202,7 @@ class CgcCliEngineAdapter(CodeIntelEngine):
         # Fallback: parse Rich table text output
         summary = RepoSummary(repo_path=repo_path)
         for line in output.splitlines():
-            cleaned = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+            cleaned = self._clean_rich(line).strip()
             lower = cleaned.lower()
             # Match lines like "Files  | 42" or "Files    42"
             match = re.search(r"(\d+)\s*$", cleaned)
@@ -251,8 +251,7 @@ class CgcCliEngineAdapter(CodeIntelEngine):
 
         # Parse Rich table text output
         results: list[SymbolResult] = []
-        for line in output.splitlines():
-            cleaned = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+        for cleaned in self._merge_rich_rows(output):
             # Skip header/separator lines
             if (
                 not cleaned
