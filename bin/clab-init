@@ -1,0 +1,50 @@
+#!/bin/bash
+set -euo pipefail
+
+CLAB_HOME="${CLAB_HOME:-/Users/steve/clab-platform}"
+MCP_PYTHON="${CLAB_HOME}/local-agent/.venv/bin/python"
+MCP_SERVER="${CLAB_HOME}/mcp-server/server.py"
+
+# Create .mcp.json in current directory
+cat > .mcp.json << EOF
+{
+  "mcpServers": {
+    "clab": {
+      "command": "${MCP_PYTHON}",
+      "args": ["${MCP_SERVER}"],
+      "cwd": "${CLAB_HOME}"
+    }
+  }
+}
+EOF
+
+# Create .claude/settings.json if not exists
+mkdir -p .claude
+if [ ! -f .claude/settings.json ]; then
+  cat > .claude/settings.json << 'SETTINGS'
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Agent",
+      "WebFetch",
+      "WebSearch",
+      "mcp__clab__*"
+    ],
+    "deny": []
+  }
+}
+SETTINGS
+fi
+
+echo "✓ clab initialized in $(pwd)"
+echo "  .mcp.json       → clab MCP server (ai.clab.one)"
+echo "  .claude/         → permissions configured"
+echo ""
+echo "Restart Claude Code to connect:"
+echo "  claude"
