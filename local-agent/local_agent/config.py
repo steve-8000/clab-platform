@@ -1,7 +1,10 @@
 """Agent configuration and LLM model factory."""
 from __future__ import annotations
+import logging
 import os
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class AgentConfig:
@@ -65,6 +68,21 @@ async def invoke_cli(system_prompt: str, user_prompt: str, timeout: float = 120)
     return await _invoke_via_subprocess(system_prompt, user_prompt, timeout)
 
 
+async def _find_agent_workspace(runtime) -> str | None:
+    """Find existing agent workspace in cmux to reuse."""
+    try:
+        workspaces = await runtime.cmux.workspace_list()
+        for ws in workspaces:
+            name = ws.get("name", ws.get("title", ""))
+            ws_id = ws.get("id", ws.get("workspace_id", ""))
+            if "agent" in name.lower() or "codex" == name.lower():
+                logger.info("Found existing agent workspace: %s (%s)", ws_id, name)
+                return ws_id
+    except Exception as exc:
+        logger.debug("Failed to list workspaces: %s", exc)
+    return None
+
+
 async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeout: float) -> str:
     """Use agent workspace main surface for reasoning via codex."""
     global _planner_engine_started
@@ -72,17 +90,41 @@ async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeou
     workdir = get_config().workdir
 
     if not runtime.workspace_id:
-        await runtime.create_agent("agent-planner", workdir=workdir, reuse_current=False)
+        # Try to find and reuse existing agent workspace
+        existing_ws = await _find_agent_workspace(runtime)
+        if existing_ws:
+            runtime.workspace_id = existing_ws
+            runtime.workspace_name = "agent-planner"
+            runtime._current_workdir = workdir
+            logger.info("Reusing existing agent workspace: %s", existing_ws)
+        else:
+            await runtime.create_agent("agent-planner", workdir=workdir, reuse_current=False)
 
     if not _planner_engine_started:
         surfaces = await runtime.cmux.surface_list(runtime.workspace_id)
         main_id = surfaces[0].get("surface_id", surfaces[0].get("id")) if surfaces else None
         if not main_id:
             raise RuntimeError("No main surface in agent workspace")
-        runtime._engine_surfaces["codex"] = main_id
-        runtime.surfaces.register("codex", main_id, "codex")
-        await runtime.start_engine(main_id, "codex", workdir)
-        _planner_engine_started = True
+
+        # Check if codex is already running on this surface
+        try:
+            output = await runtime.cmux.read_text(main_id)
+            if "gpt-" in output.lower() and "\u203a" in output:
+                # Codex TUI already running - just register the surface
+                runtime._engine_surfaces["codex"] = main_id
+                runtime.surfaces.register("codex", main_id, "codex")
+                _planner_engine_started = True
+                logger.info("Codex already running on main surface %s", main_id)
+            else:
+                runtime._engine_surfaces["codex"] = main_id
+                runtime.surfaces.register("codex", main_id, "codex")
+                await runtime.start_engine(main_id, "codex", workdir)
+                _planner_engine_started = True
+        except Exception:
+            runtime._engine_surfaces["codex"] = main_id
+            runtime.surfaces.register("codex", main_id, "codex")
+            await runtime.start_engine(main_id, "codex", workdir)
+            _planner_engine_started = True
 
     full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
     await runtime.inject_command("codex", full_prompt)

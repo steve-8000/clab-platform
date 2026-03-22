@@ -68,16 +68,23 @@ async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
     if not state.get("cmux_workspace_id"):
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         await ProjectBootstrapper().provision(workdir)
-        from local_agent.config import _planner_runtime
+        from local_agent.config import _find_agent_workspace, _planner_runtime
         if _planner_runtime and _planner_runtime.workspace_id:
             runtime.workspace_id = _planner_runtime.workspace_id
             runtime.workspace_name = _planner_runtime.workspace_name
             runtime._current_workdir = workdir
             state["cmux_workspace_id"] = _planner_runtime.workspace_id
         else:
-            goal = state.get("goal", "mission")
-            ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
-            state["cmux_workspace_id"] = ws_id
+            # Try to reuse existing agent workspace
+            existing = await _find_agent_workspace(runtime)
+            if existing:
+                runtime.workspace_id = existing
+                runtime._current_workdir = workdir
+                state["cmux_workspace_id"] = existing
+            else:
+                goal = state.get("goal", "mission")
+                ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
+                state["cmux_workspace_id"] = ws_id
 
     # Get or create surface for this engine (reused across tasks)
     engine_initialized = state.get("_engine_initialized", set())
@@ -261,16 +268,23 @@ async def parallel_executor_node(state: AgentState) -> dict:
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         workdir = state.get("workdir", ".")
         await ProjectBootstrapper().provision(workdir)
-        from local_agent.config import _planner_runtime
+        from local_agent.config import _find_agent_workspace, _planner_runtime
         if _planner_runtime and _planner_runtime.workspace_id:
             runtime.workspace_id = _planner_runtime.workspace_id
             runtime.workspace_name = _planner_runtime.workspace_name
             runtime._current_workdir = workdir
             state["cmux_workspace_id"] = _planner_runtime.workspace_id
         else:
-            goal = state.get("goal", "mission")
-            ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
-            state["cmux_workspace_id"] = ws_id
+            # Try to reuse existing agent workspace
+            existing = await _find_agent_workspace(runtime)
+            if existing:
+                runtime.workspace_id = existing
+                runtime._current_workdir = workdir
+                state["cmux_workspace_id"] = existing
+            else:
+                goal = state.get("goal", "mission")
+                ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
+                state["cmux_workspace_id"] = ws_id
 
     # Report batch start to Control Plane
     reporter = state.get("_cp_reporter")
