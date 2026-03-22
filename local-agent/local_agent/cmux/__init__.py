@@ -2,7 +2,7 @@
 
 from .client import CmuxClient
 from .monitor import CompletionMonitor
-from .executor import CmuxRuntime, TaskResult, SurfaceInfo
+from .executor import CmuxRuntime, TaskResult, SurfaceInfo, SurfaceEntry, SurfaceRegistry
 from .browser import CmuxBrowser
 from .bootstrap import ProjectBootstrapper
 from .worker import Worker, WorkerPool, WorkerState, ReviewLoop, ReviewResult
@@ -12,6 +12,8 @@ __all__ = [
     "CmuxRuntime",
     "TaskResult",
     "SurfaceInfo",
+    "SurfaceEntry",
+    "SurfaceRegistry",
     "CompletionMonitor",
     "CmuxBrowser",
     "ProjectBootstrapper",

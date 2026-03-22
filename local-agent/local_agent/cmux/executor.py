@@ -40,6 +40,90 @@ AUTONOMOUS_DIRECTIVE = (
 
 
 @dataclass
+class SurfaceEntry:
+    """A registered surface with its role and metadata."""
+    surface_id: str
+    role: str        # "claude", "codex", "codex-worker-0", "codex-worker-1", "codex-worker-2", "browser"
+    engine: str      # "claude", "codex", "browser"
+    started: bool = False
+    task_id: str | None = None  # currently assigned task
+    owned: bool = True  # False if shared/borrowed (don't close on shutdown)
+
+
+class SurfaceRegistry:
+    """Central registry mapping roles to surface IDs.
+
+    Ensures commands go to the correct surface by role lookup.
+    Provides validation and debugging support.
+    """
+
+    def __init__(self) -> None:
+        self._surfaces: dict[str, SurfaceEntry] = {}  # role -> SurfaceEntry
+
+    def register(self, role: str, surface_id: str, engine: str, owned: bool = True) -> None:
+        """Register a surface with a role."""
+        self._surfaces[role] = SurfaceEntry(
+            surface_id=surface_id, role=role, engine=engine, owned=owned,
+        )
+        logger.info("Surface registered: role=%s surface=%s engine=%s owned=%s", role, surface_id, engine, owned)
+
+    def get(self, role: str) -> str:
+        """Get surface_id by role. Raises KeyError if not found."""
+        entry = self._surfaces.get(role)
+        if not entry:
+            available = list(self._surfaces.keys())
+            raise KeyError(f"No surface for role '{role}'. Available: {available}")
+        return entry.surface_id
+
+    def get_entry(self, role: str) -> SurfaceEntry | None:
+        """Get full entry by role."""
+        return self._surfaces.get(role)
+
+    def get_by_engine(self, engine: str) -> str | None:
+        """Get first surface_id matching engine type."""
+        for entry in self._surfaces.values():
+            if entry.engine == engine:
+                return entry.surface_id
+        return None
+
+    def has(self, role: str) -> bool:
+        return role in self._surfaces
+
+    def mark_started(self, role: str) -> None:
+        if role in self._surfaces:
+            self._surfaces[role].started = True
+
+    def is_started(self, role: str) -> bool:
+        entry = self._surfaces.get(role)
+        return entry.started if entry else False
+
+    def assign_task(self, role: str, task_id: str | None) -> None:
+        if role in self._surfaces:
+            self._surfaces[role].task_id = task_id
+
+    def remove(self, role: str) -> str | None:
+        entry = self._surfaces.pop(role, None)
+        return entry.surface_id if entry else None
+
+    def owned_surfaces(self) -> list[SurfaceEntry]:
+        """Surfaces we own and should close on shutdown."""
+        return [e for e in self._surfaces.values() if e.owned]
+
+    def all_roles(self) -> list[str]:
+        return list(self._surfaces.keys())
+
+    def dump(self) -> str:
+        """Debug string showing all registered surfaces."""
+        lines = []
+        for role, entry in self._surfaces.items():
+            status = "started" if entry.started else "pending"
+            task = f" task={entry.task_id}" if entry.task_id else ""
+            own = "" if entry.owned else " (shared)"
+            lines.append(f"  {role}: {entry.surface_id[:8]}... [{entry.engine}] {status}{task}{own}")
+        return "\n".join(lines) or "  (empty)"
+
+
+@dataclass
 class SurfaceInfo:
     """Tracks a surface allocated within a workspace."""
     surface_id: str
@@ -85,6 +169,7 @@ class CmuxRuntime:
         self.workspace_id: str | None = None
         self.workspace_name: str = ""
         # Engine-level surfaces — ONE surface per engine, reused across tasks
+        self.surfaces = SurfaceRegistry()
         self._engine_surfaces: dict[str, str] = {}  # engine → surface_id
         self._browser: CmuxBrowser | None = None
         self._right_surface_id: str | None = None
@@ -163,6 +248,7 @@ class CmuxRuntime:
             self._right_surface_id = surface_id
 
         self._engine_surfaces[engine] = surface_id
+        self.surfaces.register(engine, surface_id, engine)
 
         # Rename surface tab to show engine name
         try:
@@ -183,6 +269,7 @@ class CmuxRuntime:
         self._browser = CmuxBrowser(self.cmux, self.workspace_id)
         surface_id = await self._browser.open()
         self._engine_surfaces["browser"] = surface_id
+        self.surfaces.register("browser", surface_id, "browser")
         return surface_id
 
     def get_surface_id(self, engine: str) -> str | None:
@@ -231,6 +318,8 @@ class CmuxRuntime:
             await asyncio.sleep(1.0)
             await self.cmux.send_key(surface_id, "enter")
             await asyncio.sleep(3)
+
+        self.surfaces.mark_started(engine)
 
     async def inject_command(self, engine: str, instruction: str) -> None:
         """Send a command/instruction to an engine's surface, then press Enter.
@@ -350,7 +439,8 @@ class CmuxRuntime:
         if not self.workspace_id:
             raise RuntimeError("No agent created — call create_agent() first")
 
-        pool = WorkerPool(self.cmux, self.workspace_id, num_workers)
+        existing_claude = self._engine_surfaces.get("claude")
+        pool = WorkerPool(self.cmux, self.workspace_id, num_workers, existing_claude_surface_id=existing_claude, registry=self.surfaces)
         await pool.initialize(workdir, system_prompt)
         self._worker_pool = pool
         return pool
