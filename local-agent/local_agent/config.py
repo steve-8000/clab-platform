@@ -66,7 +66,7 @@ async def invoke_cli(system_prompt: str, user_prompt: str, timeout: float = 120)
 
 
 async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeout: float) -> str:
-    """Use agent workspace for reasoning via codex. Creates agent WS if needed."""
+    """Use agent workspace main surface for reasoning via codex."""
     global _planner_engine_started
 
     workdir = get_config().workdir
@@ -74,10 +74,14 @@ async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeou
     if not runtime.workspace_id:
         await runtime.create_agent("agent-planner", workdir=workdir, reuse_current=False)
 
-    surface_id = await runtime.get_or_create_surface("codex")
-
     if not _planner_engine_started:
-        await runtime.start_engine(surface_id, "codex", workdir)
+        surfaces = await runtime.cmux.surface_list(runtime.workspace_id)
+        main_id = surfaces[0].get("surface_id", surfaces[0].get("id")) if surfaces else None
+        if not main_id:
+            raise RuntimeError("No main surface in agent workspace")
+        runtime._engine_surfaces["codex"] = main_id
+        runtime.surfaces.register("codex", main_id, "codex")
+        await runtime.start_engine(main_id, "codex", workdir)
         _planner_engine_started = True
 
     full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
@@ -92,7 +96,7 @@ async def cleanup_planner_runtime():
     global _planner_runtime, _planner_engine_started
     if _planner_runtime:
         try:
-            # Don't shutdown surfaces — orchestrator workspace stays alive
+            await _planner_runtime.shutdown()
             await _planner_runtime.cmux.disconnect()
         except Exception:
             pass

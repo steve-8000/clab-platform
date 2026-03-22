@@ -361,6 +361,9 @@ class WorkerPool:
             logger.info("Reviewer reusing planner codex surface: %s", reviewer_surface_id)
         else:
             reviewer_surface_id = main_surface_id
+
+        # Split anchor is always reviewer surface (planner's codex = main surface now)
+        split_anchor = reviewer_surface_id
         try:
             await self.cmux.request(
                 "surface.rename",
@@ -371,11 +374,11 @@ class WorkerPool:
 
         # Split workers from reviewer surface (balanced 2-column grid)
         # Step 1: reviewer → split right → w0
-        surface_0 = await self.cmux.surface_split("right", self.workspace_id, reviewer_surface_id)
+        surface_0 = await self.cmux.surface_split("right", self.workspace_id, split_anchor)
         w0_id = surface_0.get("surface_id", surface_0.get("id"))
 
         # Step 2: reviewer → split down → w1
-        surface_1 = await self.cmux.surface_split("down", self.workspace_id, reviewer_surface_id)
+        surface_1 = await self.cmux.surface_split("down", self.workspace_id, split_anchor)
         w1_id = surface_1.get("surface_id", surface_1.get("id"))
 
         # Step 3: w0 → split down → w2
