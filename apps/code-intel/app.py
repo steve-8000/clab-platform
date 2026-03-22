@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import asyncio
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -82,10 +83,41 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("Failed to create DB pool", error=str(exc))
         pool = None
+
+    # Re-index repos from PV on startup (FalkorDB Lite data is ephemeral)
+    if pool:
+        asyncio.create_task(_reindex_existing_repos())
+
     yield
     if pool:
         await pool.close()
         logger.info("DB pool closed")
+
+
+async def _reindex_existing_repos():
+    """Re-index all repos found in REPOS_DIR on startup."""
+    await asyncio.sleep(3)  # let uvicorn finish startup
+    engine = _get_cgc_engine()
+    if engine is None:
+        logger.warning("CGC engine not available; skipping startup re-index")
+        return
+
+    if not os.path.isdir(REPOS_DIR):
+        return
+
+    repo_dirs = [d for d in os.listdir(REPOS_DIR) if os.path.isdir(os.path.join(REPOS_DIR, d))]
+    if not repo_dirs:
+        logger.info("No repos in REPOS_DIR; skipping startup re-index")
+        return
+
+    logger.info("Startup re-index", repo_count=len(repo_dirs))
+    for repo_dir in repo_dirs:
+        local_path = os.path.join(REPOS_DIR, repo_dir)
+        try:
+            result = await engine.index_repository(local_path)
+            logger.info("Startup re-index done", repo=repo_dir, status=result.status)
+        except Exception as exc:
+            logger.error("Startup re-index failed", repo=repo_dir, error=str(exc))
 
 
 app = FastAPI(title="Code Intel Service", lifespan=lifespan)
@@ -222,14 +254,23 @@ async def trigger_index(repo_id: str, req: TriggerIndexRequest, background_tasks
     build_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
 
-    snapshot_row = await db.fetchrow(
-        """
-        INSERT INTO ci_repo_snapshots (id, repository_id, commit_hash, branch, snapshot_at, metadata)
-        VALUES ($1, $2, $3, $4, $5, '{}'::jsonb)
-        RETURNING *
-        """,
-        snapshot_id, repo_id, commit_hash, branch, now,
-    )
+    try:
+        snapshot_row = await db.fetchrow(
+            """
+            INSERT INTO ci_repo_snapshots (id, repository_id, commit_hash, branch, snapshot_at, metadata)
+            VALUES ($1, $2, $3, $4, $5, '{}'::jsonb)
+            RETURNING *
+            """,
+            snapshot_id, repo_id, commit_hash, branch, now,
+        )
+    except asyncpg.UniqueViolationError:
+        snapshot_row = await db.fetchrow(
+            "SELECT * FROM ci_repo_snapshots WHERE repository_id = $1 AND commit_hash = $2",
+            repo_id, commit_hash,
+        )
+        if not snapshot_row:
+            raise HTTPException(409, "Snapshot already exists but could not be loaded")
+        snapshot_id = snapshot_row["id"]
 
     build_row = await db.fetchrow(
         """
