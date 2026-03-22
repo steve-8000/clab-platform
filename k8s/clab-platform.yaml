@@ -1,0 +1,380 @@
+# clab-platform — unified K8s deployment
+# Deploy: kubectl apply -f k8s/
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: clab
+  labels:
+    app.kubernetes.io/part-of: clab-platform
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-secret
+  namespace: clab
+type: Opaque
+data:
+  password: Y2xhYi1zdGctcGFzcw==
+---
+# PostgreSQL
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: clab-platform
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: clab-platform
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: clab
+            - name: POSTGRES_USER
+              value: clab
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: password
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "clab"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: clab-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+# Control Plane
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: control-plane-config
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/part-of: clab-platform
+data:
+  PORT: "8000"
+  LOG_LEVEL: "info"
+  DATABASE_URL: "postgresql://clab:clab-stg-pass@postgres.clab.svc.cluster.local:5432/clab"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/part-of: clab-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: control-plane
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: control-plane
+        app.kubernetes.io/part-of: clab-platform
+    spec:
+      initContainers:
+        - name: wait-postgres
+          image: postgres:16-alpine
+          command: ["sh", "-c", "until pg_isready -h postgres.clab.svc.cluster.local -U clab; do sleep 2; done"]
+      containers:
+        - name: control-plane
+          image: clab/control-plane:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: control-plane-config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/part-of: clab-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: control-plane
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+# Knowledge Service
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: knowledge-service-config
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: knowledge-service
+    app.kubernetes.io/part-of: clab-platform
+data:
+  PORT: "4007"
+  STORE_DIR: "/data/knowledge"
+  LOG_LEVEL: "info"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: knowledge-data
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: knowledge-service
+    app.kubernetes.io/part-of: clab-platform
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: knowledge-service
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: knowledge-service
+    app.kubernetes.io/part-of: clab-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: knowledge-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: knowledge-service
+        app.kubernetes.io/part-of: clab-platform
+    spec:
+      containers:
+        - name: knowledge-service
+          image: clab/knowledge-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4007
+          envFrom:
+            - configMapRef:
+                name: knowledge-service-config
+          volumeMounts:
+            - name: knowledge-data
+              mountPath: /data/knowledge
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 4007
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 4007
+            initialDelaySeconds: 3
+            periodSeconds: 5
+      volumes:
+        - name: knowledge-data
+          persistentVolumeClaim:
+            claimName: knowledge-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: knowledge-service
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: knowledge-service
+    app.kubernetes.io/part-of: clab-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: knowledge-service
+  ports:
+    - port: 4007
+      targetPort: 4007
+---
+# Dashboard
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-config
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: dashboard
+    app.kubernetes.io/part-of: clab-platform
+data:
+  CONTROL_PLANE_URL: "http://control-plane:8000"
+  KNOWLEDGE_URL: "http://knowledge-service:4007"
+  NODE_ENV: "production"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dashboard
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: dashboard
+    app.kubernetes.io/part-of: clab-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dashboard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dashboard
+        app.kubernetes.io/part-of: clab-platform
+    spec:
+      containers:
+        - name: dashboard
+          image: clab/dashboard:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: dashboard-config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: clab
+  labels:
+    app.kubernetes.io/name: dashboard
+    app.kubernetes.io/part-of: clab-platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: dashboard
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+# Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: clab-platform
+  namespace: clab
+  labels:
+    app.kubernetes.io/part-of: clab-platform
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  tls:
+    - hosts: [ai.clab.one]
+      secretName: clab-platform-tls
+  rules:
+    - host: ai.clab.one
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: dashboard
+                port:
+                  number: 3000

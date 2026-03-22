@@ -64,6 +64,7 @@ class CompletionMonitor:
         surface_id: str,
         engine: str = "claude",
         timeout: float = 300,
+        cancel_event: asyncio.Event | None = None,
     ) -> str:
         """Wait until the engine appears idle, then return accumulated output."""
         pattern = _get_idle_pattern(engine)
@@ -74,6 +75,10 @@ class CompletionMonitor:
         # Phase 1: Wait for engine to actually start (produce meaningful output)
         engine_started = False
         while time.monotonic() - start < timeout:
+            if cancel_event and cancel_event.is_set():
+                logger.debug("Idle wait cancelled for surface %s", surface_id)
+                return last_output
+
             output = await self.cmux.read_text(surface_id)
 
             if output != last_output:

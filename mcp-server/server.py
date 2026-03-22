@@ -12,8 +12,8 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import Tool, TextContent
 
-CONTROL_URL = os.getenv("CLAB_CONTROL_URL", "http://localhost:8000")
-KNOWLEDGE_URL = os.getenv("CLAB_KNOWLEDGE_URL", "http://localhost:4007")
+CONTROL_URL = os.getenv("CLAB_CONTROL_URL", "https://ai.clab.one/api/cp")
+KNOWLEDGE_URL = os.getenv("CLAB_KNOWLEDGE_URL", "https://ai.clab.one/api/ks")
 LOCAL_AGENT_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "local-agent")
 
 server = Server("clab-platform")
@@ -199,9 +199,11 @@ async def _mission_run(args: dict):
     workdir = args.get("workdir", os.getcwd())
     llm = args.get("llm", "anthropic")
 
-    # Run local-agent as subprocess
+    # Use local-agent's venv python (not the MCP server's sys.executable)
+    venv_python = os.path.join(LOCAL_AGENT_DIR, ".venv", "bin", "python")
+    python = venv_python if os.path.exists(venv_python) else sys.executable
     cmd = [
-        sys.executable, "-m", "local_agent",
+        python, "-m", "local_agent",
         "--llm", llm,
         "--workdir", workdir,
         goal,

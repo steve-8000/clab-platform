@@ -24,6 +24,7 @@ from typing import Any
 from .client import CmuxClient
 from .monitor import CompletionMonitor
 from .browser import CmuxBrowser
+from .worker import WorkerPool
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,8 @@ class CmuxRuntime:
         self._engine_surfaces: dict[str, str] = {}  # engine → surface_id
         self._browser: CmuxBrowser | None = None
         self._right_surface_id: str | None = None
+        self._worker_pool: WorkerPool | None = None
+        self._browser_workspace_id: str | None = None
 
     # ---- Workspace (= Agent) lifecycle ----
 
@@ -334,6 +337,74 @@ class CmuxRuntime:
             surface_id=surface_id,
         )
 
+    # ---- Multi-worker parallel execution ----
+
+    async def create_worker_pool(
+        self,
+        num_workers: int = 3,
+        workdir: str = "",
+        system_prompt: str = "",
+    ) -> WorkerPool:
+        """Create a pool of N codex workers + 1 claude reviewer."""
+        if not self.workspace_id:
+            raise RuntimeError("No agent created — call create_agent() first")
+
+        pool = WorkerPool(self.cmux, self.workspace_id, num_workers)
+        await pool.initialize(workdir, system_prompt)
+        self._worker_pool = pool
+        return pool
+
+    @property
+    def worker_pool(self) -> WorkerPool | None:
+        return self._worker_pool
+
+    async def execute_parallel(
+        self,
+        tasks: list[dict],
+        timeout: float = 300,
+    ) -> list[TaskResult]:
+        """Execute multiple tasks in parallel using the worker pool.
+
+        Falls back to sequential execution if no pool available.
+        """
+        if not self._worker_pool:
+            results = []
+            for task in tasks:
+                engine = task.get("engine", "codex")
+                await self.get_or_create_surface(engine)
+                await self.inject_command(engine, task["description"])
+                result = await self.collect_output(engine, timeout, task.get("id"))
+                results.append(result)
+            return results
+
+        return await self._worker_pool.execute_batch(tasks, timeout)
+
+    # ---- Browser workspace isolation ----
+
+    async def create_browser_workspace(self, name: str = "browser-verify") -> str:
+        """Create a separate workspace for browser verification."""
+        ws = await self.cmux.workspace_create(name[:40])
+        self._browser_workspace_id = ws.get("id", ws.get("workspace_id"))
+        logger.info("Browser workspace created: %s", self._browser_workspace_id)
+        return self._browser_workspace_id
+
+    async def browser_interact_isolated(self, url: str) -> dict:
+        """Open browser in the isolated browser workspace."""
+        ws_id = self._browser_workspace_id or self.workspace_id
+        if not self._browser:
+            self._browser = CmuxBrowser(self.cmux, ws_id)
+            await self._browser.open()
+
+        await self._browser.navigate(url)
+        await asyncio.sleep(1)
+        snapshot = await self._browser.snapshot()
+        return {
+            "surface_id": self._browser.surface_id,
+            "workspace_id": ws_id,
+            "url": url,
+            "snapshot": snapshot,
+        }
+
     # ---- Cleanup ----
 
     async def release_surface(self, engine: str) -> None:
@@ -348,7 +419,11 @@ class CmuxRuntime:
             self._right_surface_id = None
 
     async def shutdown(self) -> None:
-        """Release all surfaces and browser. Workspace remains for inspection."""
+        """Release all surfaces, worker pool, and browser. Workspace remains for inspection."""
+        if self._worker_pool:
+            await self._worker_pool.shutdown()
+            self._worker_pool = None
+
         if self._browser:
             await self._browser.close()
             self._browser = None

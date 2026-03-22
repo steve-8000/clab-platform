@@ -55,3 +55,7 @@ class AgentState(TypedDict):
     cmux_workspace_id: str
     surface_map: dict  # task_id → surface_id
     browser_surface_id: str
+
+    # Parallel execution
+    parallel_mode: bool
+    batch_results: list[dict]

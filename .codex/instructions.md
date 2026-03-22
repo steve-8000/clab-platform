@@ -12,11 +12,13 @@
 - Knowledge Plane: `knowledge-server/` (Go), `knowledge/` (Python)
 - Local Agent: `local-agent/` (Python/LangGraph)
 - cmux Runtime: `local-agent/local_agent/cmux/`
+- cmux Workers: `local-agent/local_agent/cmux/worker.py` (WorkerPool: 3 Codex + 1 Claude reviewer)
+- Dashboard: `apps/dashboard/` (Next.js 15)
 
 ## Code Style
 - Python: type hints, async/await, logging over print
 - Go: standard library patterns, chi router
-- TypeScript/JS: ESM imports, compiled dist/ only (no TS source)
+- TypeScript/React: Next.js App Router, Tailwind CSS
 - Comments and variable names: English
 - Communication: Korean
 
@@ -24,7 +26,6 @@
 - Control Plane: `pytest control-plane/tests/ -v`
 - Knowledge Server: `cd knowledge-server && go test ./... -v`
 - Knowledge Library: `pytest knowledge/tests/ -v`
-- Cutover validation: `node scripts/validate-cutover-v4.mjs`
 
 ## Notify on completion
 Codex is configured to notify via cmux when tasks complete.

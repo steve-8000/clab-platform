@@ -13,3 +13,5 @@ build/
 node_modules/
 .next/
 *.tsbuildinfo
+bin/knowledge-server
+.github/

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 
 def main():
@@ -26,8 +27,8 @@ def main():
 
     from local_agent.config import AgentConfig, configure
     config = AgentConfig(
-        control_plane_url=args.control_plane or "http://localhost:8000",
-        knowledge_url=args.knowledge or "http://localhost:4007",
+        control_plane_url=args.control_plane or os.getenv("CLAB_CONTROL_URL", "https://ai.clab.one/api/cp"),
+        knowledge_url=args.knowledge or os.getenv("CLAB_KNOWLEDGE_URL", "https://ai.clab.one/api/ks"),
         llm_provider=args.llm,
         llm_model=args.model,
         workdir=args.workdir,
@@ -48,6 +49,16 @@ def main():
 async def run_goal(goal: str, config):
     """Run a single goal through the agent graph."""
     from local_agent.graph.builder import build_agent_graph
+    from local_agent.cp_reporter import CPReporter
+
+    # Connect to Control Plane (fail-safe — runs offline if CP unavailable)
+    reporter = CPReporter(config.control_plane_url)
+    try:
+        thread_id, run_id = await reporter.start_session(goal, config.workdir)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("CP unavailable, running offline: %s", exc)
+        reporter = None
+        thread_id = run_id = None
 
     graph = build_agent_graph(
         interrupt_before_execute=config.interrupt_before_execute,
@@ -74,19 +85,28 @@ async def run_goal(goal: str, config):
         "knowledge_debt_passed": True,
         "iteration_count": 0,
         "max_iterations": 20,
+        "_cp_reporter": reporter,
     }
 
     print(f"\n🎯 Goal: {goal}")
     print(f"📁 Workdir: {config.workdir}")
     print(f"🤖 LLM: {config.llm_provider}")
+    if thread_id:
+        print(f"📡 CP: thread={thread_id[:8]}... run={run_id[:8]}...")
+    else:
+        print(f"📡 CP: offline mode")
     print("─" * 60)
 
     result = await graph.ainvoke(initial_state)
 
-    # Print summary
+    # Report completion to CP
     completed = result.get("completed_tasks", [])
     failed = result.get("failed_tasks", [])
     insights = result.get("insights", [])
+
+    if reporter:
+        await reporter.report_finished(success=len(failed) == 0)
+        await reporter.close()
 
     print("\n" + "─" * 60)
     print(f"✅ Completed: {len(completed)} tasks")

@@ -149,8 +149,141 @@ async def executor_node(state: dict) -> dict:
     task = plan[idx]
     logger.info("Executing task %s: %s (%s)", task["id"], task["title"], task.get("engine", "claude"))
 
+    # Report task start to Control Plane
+    reporter = state.get("_cp_reporter")
+    if reporter:
+        try:
+            await reporter.report_task_start(task.get("title", task["id"]), idx)
+        except Exception:
+            pass
+
     runtime = await _get_cmux_runtime()
     if runtime:
-        return await _execute_via_cmux(runtime, state, task)
+        result = await _execute_via_cmux(runtime, state, task)
     else:
-        return await _execute_via_subprocess(state, task)
+        result = await _execute_via_subprocess(state, task)
+
+    # Report task completion to Control Plane
+    if reporter:
+        try:
+            await reporter.report_task_complete(
+                task.get("title", task["id"]),
+                result.get("current_output", "")[:2000],
+            )
+        except Exception:
+            pass
+
+    return result
+
+
+
+# ---- Parallel execution support ----
+
+_cmux_worker_pool = None
+
+
+async def _get_or_create_worker_pool(runtime, state: dict):
+    """Lazily create worker pool on first parallel execution."""
+    global _cmux_worker_pool
+    if _cmux_worker_pool is not None:
+        return _cmux_worker_pool
+
+    workdir = state.get("workdir", ".")
+    enriched_context = state.get("enriched_context", "")
+    pool = await runtime.create_worker_pool(
+        num_workers=3, workdir=workdir, system_prompt=enriched_context
+    )
+    _cmux_worker_pool = pool
+    return pool
+
+
+async def parallel_executor_node(state: dict) -> dict:
+    """Execute up to N pending tasks in parallel via WorkerPool.
+
+    Falls back to sequential executor_node when cmux/WorkerPool unavailable.
+    """
+    plan = state.get("plan", [])
+    idx = state.get("current_task_index", 0)
+
+    # Collect pending tasks from current index (max 3)
+    pending_tasks = []
+    pending_indices = []
+    for i in range(idx, len(plan)):
+        if plan[i].get("status") == "pending":
+            pending_tasks.append(plan[i])
+            pending_indices.append(i)
+        if len(pending_tasks) >= 3:
+            break
+
+    if not pending_tasks:
+        return {"current_output": "", "current_exit_code": -1}
+
+    runtime = await _get_cmux_runtime()
+    if not runtime:
+        return await executor_node(state)
+
+    # Ensure workspace exists
+    if not state.get("cmux_workspace_id"):
+        from local_agent.cmux.bootstrap import ProjectBootstrapper
+        workdir = state.get("workdir", ".")
+        await ProjectBootstrapper().provision(workdir)
+        goal = state.get("goal", "mission")[:30]
+        role = state.get("role_id", "agent")
+        ws_id = await runtime.create_agent(f"{role}-{goal}", workdir=workdir)
+        state["cmux_workspace_id"] = ws_id
+
+    # Report batch start to Control Plane
+    reporter = state.get("_cp_reporter")
+    if reporter:
+        try:
+            titles = ", ".join(t.get("title", t["id"]) for t in pending_tasks)
+            await reporter.report_task_start(f"Batch: {titles[:100]}", idx)
+        except Exception:
+            pass
+
+    try:
+        pool = await _get_or_create_worker_pool(runtime, state)
+        results = await pool.execute_batch(pending_tasks, timeout=300)
+    except Exception as exc:
+        logger.error("Parallel execution failed, falling back to sequential: %s", exc)
+        return await executor_node(state)
+
+    # Report batch completion to Control Plane
+    if reporter:
+        try:
+            for task, result in zip(pending_tasks, results):
+                await reporter.report_task_complete(
+                    task.get("title", task["id"]),
+                    result.output[:2000] if result.output else "",
+                )
+        except Exception:
+            pass
+
+    # Update plan with results
+    surface_map = state.get("surface_map", {})
+    combined_output = []
+    all_idle = True
+
+    for task, result, plan_idx in zip(pending_tasks, results, pending_indices):
+        task_id = task["id"]
+        plan[plan_idx] = {
+            **task,
+            "status": "running",
+            "attempt": task["attempt"] + 1,
+            "result": result.output[-500:] if result.output else "",
+        }
+        surface_map[task_id] = result.surface_id
+        combined_output.append(
+            f"=== Task {task_id}: {task.get('title', '')} ===\n{result.output[-1000:]}"
+        )
+        if not result.idle_detected:
+            all_idle = False
+
+    return {
+        "current_output": "\n\n".join(combined_output),
+        "current_exit_code": 0 if all_idle else 124,
+        "plan": plan,
+        "cmux_workspace_id": state.get("cmux_workspace_id", ""),
+        "surface_map": surface_map,
+        "current_task_index": max(pending_indices) + 1 if pending_indices else idx,
+    }

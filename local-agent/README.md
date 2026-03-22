@@ -1,14 +1,32 @@
 # LangGraph Local Agent
 
-The Local Agent runs on a developer's machine and acts as a bridge between the
-clab Control Plane and local CLI tools (Claude CLI, Codex CLI). It receives task
-assignments from the Control Plane over WebSocket, executes them locally, and
-streams results back.
+The Local Agent runs on a developer's machine and orchestrates task execution
+via the cmux runtime. It supports both sequential and parallel execution modes.
+
+## Architecture
+
+### Execution Modes
+
+- **Sequential**: Single engine surface execution (Claude or Codex CLI)
+- **Parallel** (`build_parallel_agent_graph`): WorkerPool with concurrent workers
+  - **3 Codex workers** (`codex-worker-0..2`) — parallel code generation
+  - **1 Claude reviewer** (`claude-reviewer`) — review + fix loop (max 2 rounds)
+  - Browser workspace runs in isolation for verification
+
+### Key Modules
+
+| Module | Description |
+|--------|-------------|
+| `local_agent/cmux/runtime.py` | cmux native runtime (workspace/surface management) |
+| `local_agent/cmux/worker.py` | WorkerPool — parallel Codex workers + Claude reviewer |
+| `local_agent/cmux/browser.py` | Isolated browser workspace for verification |
+| `graph/` | LangGraph nodes (parallel executor, planner, replanner) |
 
 ## Prerequisites
 
 - Python 3.12+
 - Claude CLI (`claude`) or Codex CLI (`codex`) installed
+- cmux installed (for workspace/surface management)
 - Network access to the Control Plane endpoint
 
 ## Setup

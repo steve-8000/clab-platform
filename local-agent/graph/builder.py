@@ -111,3 +111,93 @@ def has_more_tasks(state: dict) -> str:
         if plan[i].get("status") == "pending":
             return "select_task"
     return "post_k"
+
+
+
+def build_parallel_agent_graph(checkpointer=None, interrupt_before_execute: bool = False):
+    """Build graph with parallel execution — 3 codex workers + 1 claude reviewer.
+
+    Uses parallel_executor_node instead of sequential executor_node.
+    Batch selection and completion handle multiple tasks per cycle.
+    """
+    from langgraph.graph import StateGraph, START, END
+    from graph.state import AgentState
+    from graph.planner import planner_node
+    from graph.executor import parallel_executor_node
+    from graph.verifier import verifier_node
+    from graph.replanner import replanner_node
+    from graph.knowledge import pre_k_node, post_k_node, insight_node
+
+    builder = StateGraph(AgentState)
+
+    builder.add_node("pre_k", pre_k_node)
+    builder.add_node("planner", planner_node)
+    builder.add_node("select_task", select_batch_node)
+    builder.add_node("executor", parallel_executor_node)
+    builder.add_node("verifier", verifier_node)
+    builder.add_node("replanner", replanner_node)
+    builder.add_node("mark_complete", mark_batch_complete_node)
+    builder.add_node("post_k", post_k_node)
+    builder.add_node("insights", insight_node)
+
+    builder.add_edge(START, "pre_k")
+    builder.add_edge("pre_k", "planner")
+    builder.add_edge("planner", "select_task")
+    builder.add_edge("select_task", "executor")
+    builder.add_edge("executor", "verifier")
+
+    builder.add_conditional_edges("verifier", after_verify, {
+        "mark_complete": "mark_complete",
+        "replanner": "replanner",
+    })
+    builder.add_edge("replanner", "select_task")
+    builder.add_conditional_edges("mark_complete", has_more_tasks, {
+        "select_task": "select_task",
+        "post_k": "post_k",
+    })
+
+    builder.add_edge("post_k", "insights")
+    builder.add_edge("insights", END)
+
+    compile_kwargs = {}
+    if checkpointer:
+        compile_kwargs["checkpointer"] = checkpointer
+    if interrupt_before_execute:
+        compile_kwargs["interrupt_before"] = ["executor"]
+
+    return builder.compile(**compile_kwargs)
+
+
+def select_batch_node(state: dict) -> dict:
+    """Select the next batch of pending tasks (up to 3)."""
+    plan = state.get("plan", [])
+    idx = state.get("current_task_index", 0)
+
+    while idx < len(plan) and plan[idx].get("status") not in ("pending",):
+        idx += 1
+
+    return {"current_task_index": idx}
+
+
+def mark_batch_complete_node(state: dict) -> dict:
+    """Mark all tasks in the executed batch as complete."""
+    plan = state.get("plan", [])
+    completed = list(state.get("completed_tasks", []))
+
+    for i in range(len(plan)):
+        if plan[i].get("status") == "running":
+            plan[i] = {**plan[i], "status": "success", "result": plan[i].get("result", "")[:1000]}
+            completed.append(plan[i])
+
+    # Find next pending task index
+    next_idx = len(plan)
+    for i in range(len(plan)):
+        if plan[i].get("status") == "pending":
+            next_idx = i
+            break
+
+    return {
+        "plan": plan,
+        "current_task_index": next_idx,
+        "completed_tasks": completed,
+    }

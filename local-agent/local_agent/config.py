@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class AgentConfig:
-    control_plane_url: str = "http://localhost:8000"
-    knowledge_url: str = "http://localhost:4007"
+    control_plane_url: str = "https://ai.clab.one/api/cp"
+    knowledge_url: str = "https://ai.clab.one/api/ks"
     llm_provider: str = "anthropic"  # "anthropic" or "openai"
     llm_model: str = ""
     workdir: str = "."
@@ -24,8 +24,8 @@ def get_config() -> AgentConfig:
     global _config
     if _config is None:
         _config = AgentConfig(
-            control_plane_url=os.getenv("CONTROL_PLANE_URL", "http://localhost:8000"),
-            knowledge_url=os.getenv("KNOWLEDGE_SERVICE_URL", "http://localhost:4007"),
+            control_plane_url=os.getenv("CLAB_CONTROL_URL", "https://ai.clab.one/api/cp"),
+            knowledge_url=os.getenv("CLAB_KNOWLEDGE_URL", "https://ai.clab.one/api/ks"),
             llm_provider=os.getenv("LLM_PROVIDER", "anthropic"),
             llm_model=os.getenv("LLM_MODEL", ""),
             workdir=os.getenv("WORKDIR", os.getcwd()),

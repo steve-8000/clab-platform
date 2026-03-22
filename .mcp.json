@@ -2,11 +2,7 @@
   "mcpServers": {
     "clab": {
       "command": "python3",
-      "args": ["mcp-server/server.py"],
-      "env": {
-        "CLAB_CONTROL_URL": "http://localhost:8000",
-        "CLAB_KNOWLEDGE_URL": "http://localhost:4007"
-      }
+      "args": ["mcp-server/server.py"]
     }
   }
 }

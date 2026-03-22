@@ -15,6 +15,14 @@ Agent = cmux workspace (e.g., agent-auth, agent-reviewer)
   ├─ Surface A: Claude CLI (design, review, reasoning)
   ├─ Surface B: Codex CLI (implementation, code generation)
   └─ Surface C: Browser (web interaction, local app verification)
+
+Parallel Mode (WorkerPool):
+  ├─ codex-worker-0 ── parallel execution
+  ├─ codex-worker-1 ── parallel execution
+  ├─ codex-worker-2 ── parallel execution
+  └─ claude-reviewer ── review + fix loop
+
+Browser = separate workspace (isolated verification)
 ```
 
 - **cmux notify = trigger** ("looks done") — NOT source of truth
@@ -63,10 +71,11 @@ Agent = cmux workspace (e.g., agent-auth, agent-reviewer)
 | Knowledge Library | `knowledge/` (Python) |
 | Local Agent | `local-agent/` (Python/LangGraph) |
 | cmux Runtime | `local-agent/local_agent/cmux/` |
+| cmux Workers    | `local-agent/local_agent/cmux/worker.py` |
 | MCP Server | `mcp-server/server.py` |
 
 ## Environment
 
-- `CLAB_CONTROL_URL` — Control Plane (default: http://localhost:8000)
-- `CLAB_KNOWLEDGE_URL` — Knowledge Service (default: http://localhost:4007)
+- `CLAB_CONTROL_URL` — Control Plane (default: https://ai.clab.one/api/cp)
+- `CLAB_KNOWLEDGE_URL` — Knowledge Service (default: https://ai.clab.one/api/ks)
 - `CMUX_SOCKET_PATH` — cmux socket (default: ~/Library/Application Support/cmux/cmux.sock)

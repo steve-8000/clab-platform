@@ -16,11 +16,12 @@ A. Control Plane (K8s :8000)         B. Knowledge Plane (K8s :4007)
   └── Dashboard API / SSE streaming
 
 C. Execution Plane (Local)
-  ├── Orchestrator LLM (planning, tool selection, replanning)
   ├── LangGraph Agent (full StateGraph execution)
+  ├── cmux Runtime (workspace/surface/worker management)
+  │   ├── WorkerPool: 3× Codex parallel + 1× Claude reviewer
+  │   └── Browser workspace (isolated verification)
   ├── Claude CLI / Codex CLI (code execution)
-  ├── Test / Build / Lint (verification)
-  └── WebSocket → Control Plane (state sync)
+  └── Test / Build / Lint (verification)
 ```
 
 ## Quick Start
@@ -28,37 +29,45 @@ C. Execution Plane (Local)
 ### 1. Deploy K8s Services
 
 ```bash
-# Build images
-docker build -t clab/control-plane:v1 control-plane/
-docker build -t clab/knowledge-service:v1 knowledge-server/
+# Build all images
+bin/build-images.sh
 
-# Deploy
-kubectl apply -f control-plane/k8s/control-plane.yaml
-kubectl apply -f knowledge-server/k8s/knowledge-service.yaml
+# Deploy entire stack (PostgreSQL + Control Plane + Knowledge + Dashboard)
+kubectl apply -f k8s/
+
+# Wait for ready
+kubectl -n clab wait --for=condition=ready pod --all --timeout=120s
 ```
 
-### 2. Run Local Agent
+### 2. Connect Local Agent
 
 ```bash
-cd local-agent
-./setup.sh
-source .venv/bin/activate
+# Option A: via Ingress (if DNS configured)
+source .env.k8s
 
-python -m local_agent \
-  --control-plane https://control.clab.dev \
-  --knowledge https://knowledge.clab.dev \
-  --workdir ~/my-project \
-  "REST API 개발해줘"
+# Option B: via port-forward
+bin/port-forward.sh
+
+# Run agent
+cd local-agent && ./setup.sh && source .venv/bin/activate
+python -m local_agent --workdir ~/my-project "REST API 개발해줘"
 ```
+
+### 3. View Dashboard
+
+Open https://ai.clab.one (or http://localhost:3000 with port-forward)
 
 ## Components
 
-| Component | Language | Lines | Tests | Location |
-|-----------|----------|-------|-------|----------|
-| Control Plane | Python (FastAPI) | 471 | - | `control-plane/` |
-| Knowledge Server | Go (chi) | 2,154 | 32 | `knowledge-server/` |
-| Knowledge Library | Python | 2,235 | 47 | `knowledge/` |
-| Local Agent | Python (LangGraph) | 1,255 | - | `local-agent/` |
+| Component | Language | Location |
+|-----------|----------|----------|
+| Control Plane | Python (FastAPI) | `control-plane/` |
+| Knowledge Server | Go (chi) | `knowledge-server/` |
+| Knowledge Library | Python | `knowledge/` |
+| Local Agent | Python (LangGraph) | `local-agent/` |
+| cmux Runtime | Python | `local-agent/local_agent/cmux/` |
+| Dashboard | Next.js | `apps/dashboard/` |
+| MCP Server | Python | `mcp-server/` |
 
 ## Execution Flow
 
@@ -66,11 +75,14 @@ python -m local_agent \
 User Goal → Local Agent
   ├── 1. Pre-K: search prior knowledge (→ Knowledge Plane)
   ├── 2. Planner LLM: decompose into task graph
-  ├── 3. For each task:
-  │     ├── Claude/Codex CLI execution (local subprocess)
+  ├── 3. Execute tasks (parallel or sequential):
+  │     ├── Parallel: WorkerPool (3× Codex workers + Claude reviewer)
+  │     │   ├── Codex workers execute in parallel
+  │     │   ├── Claude reviewer approves or requests fixes
+  │     │   └── Fix loop: reviewer → worker → re-review (max 2 rounds)
+  │     ├── Sequential: single engine surface execution
   │     ├── Test/Build/Lint verification
-  │     ├── Failure → Replanner LLM → retry
-  │     └── Success → next task
+  │     └── Failure → Replanner LLM → retry
   ├── 4. Post-K: verify knowledge integrity
   ├── 5. Extract insights → store in Knowledge
   └── 6. Return results + artifacts

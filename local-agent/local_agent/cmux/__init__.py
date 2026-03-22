@@ -5,6 +5,7 @@ from .monitor import CompletionMonitor
 from .executor import CmuxRuntime, TaskResult, SurfaceInfo
 from .browser import CmuxBrowser
 from .bootstrap import ProjectBootstrapper
+from .worker import Worker, WorkerPool, WorkerState, ReviewLoop, ReviewResult
 
 __all__ = [
     "CmuxClient",
@@ -14,4 +15,9 @@ __all__ = [
     "CompletionMonitor",
     "CmuxBrowser",
     "ProjectBootstrapper",
+    "Worker",
+    "WorkerPool",
+    "WorkerState",
+    "ReviewLoop",
+    "ReviewResult",
 ]
