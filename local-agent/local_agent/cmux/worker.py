@@ -1,15 +1,15 @@
 """Worker and WorkerPool — multi-worker parallel execution for cmux runtime.
 
 Architecture:
-  WorkerPool manages N Codex workers + 1 Claude reviewer within a single workspace.
+  WorkerPool manages N Codex workers + 1 Codex reviewer within a single workspace.
   Workers execute tasks in parallel, then each result goes through ReviewLoop.
-  ReviewLoop uses the Claude reviewer surface to approve or request fixes.
+  ReviewLoop uses the Codex reviewer surface to approve or request fixes.
 
   Surface layout:
     right split → codex-worker-0
-    down split from worker-0 → codex-worker-1
-    down split from worker-1 → codex-worker-2
-    down split from worker-2 → claude-reviewer
+    down split from main → codex-worker-1
+    down split from worker-0 → codex-worker-2
+    down split from worker-1 → codex-reviewer
 """
 
 from __future__ import annotations
@@ -256,11 +256,11 @@ class ReviewLoop:
 
 
 class WorkerPool:
-    """Pool of N Codex workers + 1 Claude reviewer.
+    """Pool of N Codex workers + 1 Codex reviewer.
 
     Surface layout within one workspace:
       right split → codex-worker-0
-      down splits → codex-worker-1, codex-worker-2, claude-reviewer
+      down splits → codex-worker-1, codex-worker-2, codex-reviewer
     """
 
     def __init__(
@@ -325,41 +325,36 @@ class WorkerPool:
             except Exception:
                 pass
 
-        # Create or reuse claude reviewer surface
-        if self._existing_claude_surface_id:
-            reviewer_surface_id = self._existing_claude_surface_id
-        else:
-            reviewer_surface = await self.cmux.surface_split("down", self.workspace_id, w1_id)
-            reviewer_surface_id = reviewer_surface.get(
-                "surface_id", reviewer_surface.get("id")
+        # Create or reuse codex reviewer surface
+        reviewer_surface = await self.cmux.surface_split("down", self.workspace_id, w1_id)
+        reviewer_surface_id = reviewer_surface.get("surface_id", reviewer_surface.get("id"))
+        try:
+            await self.cmux.request(
+                "surface.rename",
+                {"surface_id": reviewer_surface_id, "name": "codex-reviewer"},
             )
-            try:
-                await self.cmux.request(
-                    "surface.rename",
-                    {"surface_id": reviewer_surface_id, "name": "claude-reviewer"},
-                )
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         reviewer_monitor = CompletionMonitor(self.cmux)
         self.reviewer = Worker(
             worker_id=-1,
             surface_id=reviewer_surface_id,
-            engine="claude",
+            engine="codex",
             monitor=reviewer_monitor,
             cmux=self.cmux,
         )
         self.review_loop = ReviewLoop(self.reviewer)
 
         if self._registry:
-            owned = not bool(self._existing_claude_surface_id)
-            self._registry.register("claude", reviewer_surface_id, "claude", owned=owned)
+            owned = True
+            self._registry.register(
+                "codex-reviewer", reviewer_surface_id, "codex", owned=owned
+            )
 
         # Start all engines in parallel
         start_tasks = [w.start_engine(workdir) for w in self.workers]
-        # Only start engine for reviewer if no pre-existing surface was provided
-        if not self._existing_claude_surface_id:
-            start_tasks.append(self.reviewer.start_engine(workdir, system_prompt))
+        start_tasks.append(self.reviewer.start_engine(workdir))
         await asyncio.gather(*start_tasks)
 
         self._initialized = True
@@ -430,7 +425,7 @@ class WorkerPool:
                     "Failed to close worker-%d: %s", worker.worker_id, exc
                 )
 
-        if self.reviewer and not self._existing_claude_surface_id:
+        if self.reviewer:
             try:
                 await self.cmux.surface_close(self.reviewer.surface_id)
             except Exception as exc:

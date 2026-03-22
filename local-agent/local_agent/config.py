@@ -15,6 +15,7 @@ class AgentConfig:
     interrupt_before_execute: bool = False
 
 _config: AgentConfig | None = None
+_planner_engine_started = False
 
 def configure(config: AgentConfig) -> None:
     global _config
@@ -33,8 +34,44 @@ def get_config() -> AgentConfig:
     return _config
 
 async def invoke_cli(system_prompt: str, user_prompt: str, timeout: float = 120) -> str:
-    """Invoke LLM for reasoning via CLI subprocess."""
+    """Invoke LLM for reasoning. Uses orchestrator's cmux surface if available, subprocess fallback."""
+    try:
+        from local_agent.graph.executor import _get_cmux_runtime
+
+        runtime = await _get_cmux_runtime()
+        if runtime:
+            return await _invoke_via_cmux(runtime, system_prompt, user_prompt, timeout)
+    except Exception:
+        pass
     return await _invoke_via_subprocess(system_prompt, user_prompt, timeout)
+
+
+async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeout: float) -> str:
+    """Use the orchestrator's existing cmux workspace for LLM reasoning.
+
+    Reuses the current workspace (reuse_current=True) instead of creating a new one.
+    This keeps the planner running in the orchestrator's window.
+    """
+    import asyncio
+
+    global _planner_engine_started
+
+    workdir = get_config().workdir
+
+    if not runtime.workspace_id:
+        await runtime.create_agent("orchestrator", workdir=workdir, reuse_current=True)
+
+    surface_id = await runtime.get_or_create_surface("claude")
+
+    if not _planner_engine_started:
+        await runtime.start_engine(surface_id, "claude", workdir)
+        _planner_engine_started = True
+
+    full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+    await runtime.inject_command("claude", full_prompt)
+
+    result = await runtime.collect_output("claude", timeout=timeout)
+    return result.output
 
 
 async def _invoke_via_subprocess(system_prompt: str, user_prompt: str, timeout: float) -> str:

@@ -49,6 +49,12 @@ async def cleanup_cmux_runtime():
             logger.debug("cmux cleanup error: %s", exc)
         _cmux_runtime = None
     _cmux_worker_pool = None
+    try:
+        import local_agent.config as cfg
+
+        cfg._planner_engine_started = False
+    except Exception:
+        pass
 
 
 async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:

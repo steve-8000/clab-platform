@@ -480,7 +480,7 @@ class CmuxRuntime:
         workdir: str = "",
         system_prompt: str = "",
     ) -> WorkerPool:
-        """Create a pool of N codex workers + 1 claude reviewer. Idempotent."""
+        """Create a pool of N codex workers + 1 codex reviewer. Idempotent."""
         if self._worker_pool is not None:
             logger.info("Reusing existing worker pool")
             return self._worker_pool
@@ -488,8 +488,12 @@ class CmuxRuntime:
         if not self.workspace_id:
             raise RuntimeError("No agent created — call create_agent() first")
 
-        existing_claude = self._engine_surfaces.get("claude")
-        pool = WorkerPool(self.cmux, self.workspace_id, num_workers, existing_claude_surface_id=existing_claude, registry=self.surfaces)
+        pool = WorkerPool(
+            self.cmux,
+            self.workspace_id,
+            num_workers,
+            registry=self.surfaces,
+        )
         await pool.initialize(workdir, system_prompt)
         self._worker_pool = pool
         return pool
