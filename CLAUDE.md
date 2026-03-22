@@ -18,19 +18,19 @@ Orchestrator Workspace (user-facing):
   └─ Surface: Browser (optional, for verification)
   ※ No codex/claude agent surfaces here
 
-Agent Workspace (created at plan stage):
-  ├─ codex-worker-0 ── parallel execution
-  ├─ codex-worker-1 ── parallel execution
-  ├─ codex-worker-2 ── parallel execution
-  └─ codex-reviewer ── review + fix loop
+Agent Workspace "agent-planner" (planner creates at plan stage):
+  ├─ codex-0 (main) ── planner + reviewer (dual role)
+  ├─ codex-1 (right) ── worker
+  ├─ codex-2 (down-left) ── worker
+  └─ codex-3 (down-right) ── worker
 ```
 
 - Orchestrator WS: browser only. Never add agent surfaces.
-- Agent WS: all codex/claude work happens here. User switches tabs to monitor.
+- Agent WS: all codex work happens here. User switches tabs to monitor.
 - **cmux notify = trigger** ("looks done") — NOT source of truth
 - **clab review = truth** ("actually succeeded, failed, or waiting")
 - Agents run with full permissions: `--dangerously-skip-permissions`, `--full-auto`
-- Planner/verifier/replanner: orchestrator's cmux claude surface (reuse_current), subprocess fallback
+- Planner/verifier/replanner: codex-0 in agent WS (same surface as reviewer), subprocess fallback
 - mission_run: parallel by default (MCP `parallel=true`), CLI opt-in (`--parallel`)
 
 ## Available MCP Tools
@@ -71,10 +71,9 @@ Agent Workspace (created at plan stage):
 Balanced 2-column grid layout. Never cascade splits from same surface.
 
 ```
-Step 1: main → split right → w0       [main]     [w0]
-Step 2: main → split down  → w1       [w1]       [w2]
-Step 3: w0   → split down  → w2       [reviewer]
-Step 4: w1   → split down  → reviewer
+Step 1: main → split right → w1       [codex-0]  [codex-1]
+Step 2: main → split down  → w2       [codex-2]  [codex-3]
+Step 3: w1   → split down  → w3       (planner/reviewer stays on main)
 ```
 
 - Alternate between left/right columns when splitting down
