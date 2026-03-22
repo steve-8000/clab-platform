@@ -206,10 +206,10 @@ class CgcCliEngineAdapter(CodeIntelEngine):
         for line in output.splitlines():
             cleaned = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
             # Skip header/separator lines
-            if not cleaned or cleaned.startswith("-") or cleaned.startswith("+"):
+            if not cleaned or cleaned.startswith("─") or cleaned.startswith("╭") or cleaned.startswith("╰") or cleaned.startswith("├") or cleaned.startswith("└") or cleaned.startswith("-") or cleaned.startswith("+") or cleaned.startswith("┌"):
                 continue
             # Try to extract columns separated by |
-            parts = [p.strip() for p in cleaned.split("|") if p.strip()]
+            parts = [p.strip() for p in cleaned.split("│") if p.strip()]
             if len(parts) >= 3:
                 name_val = parts[0]
                 kind_val = parts[1] if len(parts) > 1 else ""
@@ -307,7 +307,7 @@ class CgcCliEngineAdapter(CodeIntelEngine):
         results: list[ComplexitySignal] = []
         for line in output.splitlines():
             cleaned = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
-            parts = [p.strip() for p in cleaned.split("|") if p.strip()]
+            parts = [p.strip() for p in cleaned.split("│") if p.strip()]
             if len(parts) >= 3:
                 name_val = parts[0]
                 try:
@@ -360,7 +360,7 @@ class CgcCliEngineAdapter(CodeIntelEngine):
         results: list[DeadCodeCandidate] = []
         for line in output.splitlines():
             cleaned = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
-            parts = [p.strip() for p in cleaned.split("|") if p.strip()]
+            parts = [p.strip() for p in cleaned.split("│") if p.strip()]
             if len(parts) >= 2:
                 name_val = parts[0]
                 file_p, line_n = _parse_location(parts[1])
@@ -403,7 +403,7 @@ def _parse_relation_output(raw: str, json_parser: Any) -> list[dict]:
     results: list[dict] = []
     for line in raw.splitlines():
         cleaned = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
-        parts = [p.strip() for p in cleaned.split("|") if p.strip()]
+        parts = [p.strip() for p in cleaned.split("│") if p.strip()]
         if len(parts) >= 2:
             name_val = parts[0]
             location = parts[1] if len(parts) > 1 else ""
