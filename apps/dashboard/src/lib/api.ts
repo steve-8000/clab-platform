@@ -1,4 +1,4 @@
-import { CONTROL_PLANE_URL, KNOWLEDGE_URL } from "./config";
+import { CODE_INTEL_URL, CONTROL_PLANE_URL, KNOWLEDGE_URL } from "./config";
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -44,4 +44,32 @@ export const ks = {
     fetchJSON<any>(`${KNOWLEDGE_URL}/v1/knowledge/search?q=${encodeURIComponent(q)}&limit=${limit}`),
   status: () => fetchJSON<any>(`${KNOWLEDGE_URL}/v1/knowledge/status`),
   tags: () => fetchJSON<any>(`${KNOWLEDGE_URL}/v1/knowledge/tags`),
+};
+
+// ---- Code Intelligence ----
+export const ci = {
+  repositories: () => fetchJSON<any>(`${CODE_INTEL_URL}/repositories`),
+  repository: (repoId: string) => fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}`),
+  summary: (repoId: string) => fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}/summary`),
+  snapshots: (repoId: string) => fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}/snapshots`),
+  searchSymbols: (repoId: string, q: string, type?: string) => {
+    const params = new URLSearchParams({ q });
+    if (type) params.set("type", type);
+    return fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}/symbols/search?${params}`);
+  },
+  impact: (repoId: string, target: string) =>
+    fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}/impact?target=${encodeURIComponent(target)}`),
+  hotspots: (repoId: string, metric?: string) => {
+    const qs = metric ? `?metric=${metric}` : "";
+    return fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}/hotspots${qs}`);
+  },
+  contextBundle: (taskRunId: string) =>
+    fetchJSON<any>(`${CODE_INTEL_URL}/task-runs/${taskRunId}/context-bundle`),
+  structuralFindings: (reviewId: string) =>
+    fetchJSON<any>(`${CODE_INTEL_URL}/reviews/${reviewId}/structural-findings`),
+  triggerIndex: (repoId: string, body: Record<string, unknown> = {}) =>
+    fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}/index`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

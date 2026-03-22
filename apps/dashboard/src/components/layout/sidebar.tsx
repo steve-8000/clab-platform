@@ -8,6 +8,7 @@ const NAV = [
   { href: "/agents", label: "Agents", icon: "⚡" },
   { href: "/knowledge", label: "Knowledge", icon: "◈" },
   { href: "/interrupts", label: "Interrupts", icon: "⚠" },
+  { href: "/code-intel", label: "Code Intel", icon: "◇" },
 ];
 
 export function Sidebar() {

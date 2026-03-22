@@ -11,6 +11,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV CONTROL_PLANE_URL=http://control-plane:8000
 ENV KNOWLEDGE_URL=http://knowledge-service:4007
+ENV CODE_INTEL_URL=http://code-intel:4010
 RUN npm run build
 
 FROM base AS runner

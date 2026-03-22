@@ -5,3 +5,4 @@ export const CONTROL_PLANE_URL =
 
 export const KNOWLEDGE_URL =
   process.env.NEXT_PUBLIC_KNOWLEDGE_URL || "/api/ks";
+export const CODE_INTEL_URL = process.env.NEXT_PUBLIC_CODE_INTEL_URL || "/api/ci";
