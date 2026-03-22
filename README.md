@@ -100,6 +100,12 @@ User Goal → Local Agent
   7. Extract insights → store in Knowledge Plane
 ```
 
+### Task Contract
+
+- Each planned task must be independently executable by a CLI tool.
+- A worker should be able to run a single task in isolation without hidden shared step order.
+- Task definitions should include the concrete command or entrypoint needed to execute the task.
+
 ## cmux Workspace Model
 
 ```
