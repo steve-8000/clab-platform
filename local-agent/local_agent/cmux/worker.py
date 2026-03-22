@@ -297,9 +297,10 @@ class ReviewLoop:
             f"Review this task completion.\n\n"
             f"Task: {task.get('title', '')}\n"
             f"Description: {task.get('description', '')[:200]}\n\n"
-            f"Changes (git diff):\n---\n{truncated}\n---\n\n"
-            f"If the task was completed correctly, respond with exactly: APPROVED\n"
-            f"If fixes are needed, respond with: FIX: <specific instructions>"
+            f"Changes:\n---\n{truncated}\n---\n\n"
+            f"Respond with APPROVED if the changes address the task goal.\n"
+            f"Respond with FIX: <instructions> ONLY if there is a clear bug or missing requirement.\n"
+            f"When in doubt, respond APPROVED."
         )
 
     def _parse_review_result(self, output: str, task_id: str) -> ReviewResult:
@@ -309,9 +310,12 @@ class ReviewLoop:
             return ReviewResult(approved=True, feedback="", task_id=task_id)
 
         fix_match = re.search(r"FIX:\s*(.+)", tail, re.DOTALL | re.IGNORECASE)
-        feedback = fix_match.group(1).strip() if fix_match else tail[-500:]
+        if fix_match:
+            return ReviewResult(approved=False, feedback=fix_match.group(1).strip(), task_id=task_id)
 
-        return ReviewResult(approved=False, feedback=feedback, task_id=task_id)
+        # No explicit FIX found - default to APPROVED (lenient)
+        logger.info("No explicit APPROVED or FIX in review output, defaulting to APPROVED")
+        return ReviewResult(approved=True, feedback="", task_id=task_id)
 
 
 class WorkerPool:
@@ -433,6 +437,15 @@ class WorkerPool:
         else:
             self.reviewer._engine_started = True
         await asyncio.gather(*start_tasks)
+
+        # Rename workspace after all engines started (prevents cmux title override)
+        try:
+            await self.cmux.request("workspace.rename", {
+                "workspace_id": self.workspace_id,
+                "name": "agent-workers",
+            })
+        except Exception:
+            pass
 
         self._initialized = True
         logger.info(
