@@ -19,8 +19,8 @@ Output ONLY a JSON array of tasks (no other text):
 Rules:
 - Each task should be independently executable by a CLI tool
 - Always create at least 3 tasks for non-trivial goals
-- Use "codex" engine for code generation, file creation, implementation tasks
-- Use "claude" engine only for architecture decisions, complex reasoning
+- Use "codex" engine for ALL tasks (code generation, implementation, verification)
+- Never use "claude" engine — all work goes through codex
 - Each task description must be self-contained and include all context needed
 - Tasks in the same wave should be independent of each other
 - Order tasks by dependency (earlier tasks first)
@@ -32,7 +32,8 @@ async def planner_node(state: AgentState) -> dict:
     """Decompose goal into task list using Claude CLI."""
     from local_agent.config import invoke_cli
 
-    context = state.get("enriched_context", "") or "No prior context."
+    raw_context = state.get("enriched_context", "") or "No prior context."
+    context = raw_context[:2000] if len(raw_context) > 2000 else raw_context
     user_prompt = f"Goal: {state['goal']}\n\nContext:\n{context}"
 
     response = await invoke_cli(PLANNER_SYSTEM_PROMPT, user_prompt, timeout=600)
@@ -57,7 +58,7 @@ def _parse_tasks(content: str) -> list:
                     "id": str(t.get("id", i+1)),
                     "title": t.get("title", ""),
                     "description": t.get("description", ""),
-                    "engine": t.get("engine", "claude"),
+                    "engine": "codex",
                     "status": "pending",
                     "result": "",
                     "attempt": 0,

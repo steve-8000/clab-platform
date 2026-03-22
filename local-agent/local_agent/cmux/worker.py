@@ -291,12 +291,12 @@ class ReviewLoop:
         return ReviewResult(approved=True, feedback="", task_id=task.get("id", "")), output
 
     def _build_review_prompt(self, task: dict, output: str, git_diff: str = "") -> str:
-        review_content = git_diff if git_diff and git_diff != "(no changes detected)" else output[-3000:]
-        truncated = review_content[-4000:] if len(review_content) > 4000 else review_content
+        review_content = git_diff if git_diff and git_diff != "(no changes detected)" else output[-1500:]
+        truncated = review_content[-2000:] if len(review_content) > 2000 else review_content
         return (
             f"Review this task completion.\n\n"
             f"Task: {task.get('title', '')}\n"
-            f"Description: {task.get('description', '')[:500]}\n\n"
+            f"Description: {task.get('description', '')[:200]}\n\n"
             f"Changes (git diff):\n---\n{truncated}\n---\n\n"
             f"If the task was completed correctly, respond with exactly: APPROVED\n"
             f"If fixes are needed, respond with: FIX: <specific instructions>"
