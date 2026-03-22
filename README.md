@@ -1,27 +1,25 @@
-# clab-platform — 3-Layer LangGraph Agent Platform
+# clab-platform — Multi-Agent Orchestration Platform
 
 Stateful development agent platform with knowledge integration.
-LangGraph-native, 3-layer architecture: Control Plane + Knowledge Plane + Execution Plane.
+LangGraph-native, 3-layer architecture: Control Plane + Knowledge Plane + cmux Runtime Plane.
 
 ## Architecture
 
 ```
-A. Control Plane (K8s :8000)         B. Knowledge Plane (K8s :4007)
-  ├── Session state                    ├── knowledge-service (Go)
-  ├── Checkpointer (PostgreSQL)        ├── Pre-K / Post-K / Insights
-  ├── Worker registry                  ├── Decision memory
-  ├── Task scheduling                  └── Integrity rules
-  ├── Human-in-the-loop API
-  ├── Audit logs / Artifact lineage
-  └── Dashboard API / SSE streaming
+A. Control Plane (K8s, FastAPI)        B. Knowledge Plane (K8s, Go)
+  ├── Thread/run state machine           ├── Pre-K / Post-K lifecycle
+  ├── Checkpointer (PostgreSQL)          ├── Knowledge search & storage
+  ├── Human-in-the-loop interrupts       ├── Insight extraction
+  ├── SSE streaming to dashboards        └── Document integrity checks
+  └── Worker registry
 
-C. Execution Plane (Local)
-  ├── LangGraph Agent (full StateGraph execution)
-  ├── cmux Runtime (workspace/surface/worker management)
-  │   ├── WorkerPool: 3× Codex parallel + 1× Claude reviewer
-  │   └── Browser workspace (isolated verification)
-  ├── Claude CLI / Codex CLI (code execution)
-  └── Test / Build / Lint (verification)
+C. cmux Runtime Plane (Local)
+  ├── LangGraph StateGraph agent
+  ├── cmux Runtime (workspace/surface management)
+  │   ├── codex-0: planner + reviewer (dual role)
+  │   ├── codex-1/2/3: parallel workers
+  │   └── Browser surface (isolated verification)
+  └── Notification-based completion monitoring
 ```
 
 ## Quick Start
@@ -29,104 +27,98 @@ C. Execution Plane (Local)
 ### 1. Deploy K8s Services
 
 ```bash
-# Build all images
 bin/build-images.sh
-
-# Deploy entire stack (PostgreSQL + Control Plane + Knowledge + Dashboard)
 kubectl apply -f k8s/
-
-# Wait for ready
 kubectl -n clab wait --for=condition=ready pod --all --timeout=120s
 ```
 
-### 2. Connect Local Agent
+### 2. Run Local Agent
 
 ```bash
-# Option A: via Ingress (if DNS configured)
-source .env.k8s
-
-# Option B: via port-forward
-bin/port-forward.sh
-
-# Run agent
 cd local-agent && ./setup.sh && source .venv/bin/activate
-python -m local_agent --parallel --workdir ~/my-project "REST API 개발해줘"
+
+# Single goal (parallel by default via MCP)
+python -m local_agent --parallel --workdir ~/my-project "implement REST API"
+
+# Or use MCP tool from Claude Code
+# mission_run(goal="implement REST API", parallel=true)
 ```
 
-### 3. View Dashboard
+### 3. Dashboard
 
-Open https://ai.clab.one (or http://localhost:3000 with port-forward)
+Open https://ai.clab.one (or `http://localhost:3000` with port-forward)
 
 ## Components
 
-| Component | Language | Location |
-|-----------|----------|----------|
+| Component | Language | Path |
+|-----------|----------|------|
 | Control Plane | Python (FastAPI) | `control-plane/` |
 | Knowledge Server | Go (chi) | `knowledge-server/` |
 | Knowledge Library | Python | `knowledge/` |
 | Local Agent | Python (LangGraph) | `local-agent/` |
 | cmux Runtime | Python | `local-agent/local_agent/cmux/` |
 | Dashboard | Next.js | `apps/dashboard/` |
-| MCP Server | Python | `mcp-server/` |
 | Code Intelligence | Python (FastAPI) | `apps/code-intel/` |
 | CodeGraph Adapter | Python | `packages/codegraph/` |
+| MCP Server | Python | `mcp-server/` |
 
 ## Execution Flow
 
 ```
 User Goal → Local Agent
-  ├── 1. Pre-K: search prior knowledge (→ Knowledge Plane)
-  ├── 2. Planner LLM: decompose into task graph
-  ├── 3. Execute tasks (parallel or sequential):
-  │     ├── MCP default: parallel mode (3× Codex + 1× Claude reviewer)
-  │     ├── CLI: --parallel flag enables parallel mode
-  │     ├── Parallel: WorkerPool (3× Codex workers + Claude reviewer)
-  │     │   ├── Codex workers execute in parallel
-  │     │   ├── Claude reviewer approves or requests fixes
-  │     │   └── Fix loop: reviewer → worker → re-review (max 2 rounds)
-  │     ├── Sequential: single engine surface execution
-  │     ├── Test/Build/Lint verification
-  │     └── Failure → Replanner LLM → retry
-  ├── 4. Post-K: verify knowledge integrity
-  ├── 5. Extract insights → store in Knowledge
-  └── 6. Return results + artifacts
+  1. Pre-K: retrieve prior knowledge (→ Knowledge Plane)
+  2. Planner (codex-0): decompose goal into task graph
+  3. Execute tasks:
+     ├── Parallel mode (default): WorkerPool
+     │   ├── codex-1/2/3 execute tasks concurrently
+     │   ├── codex-0 reviews each result (APPROVED / FIX)
+     │   └── Fix loop: reviewer → worker → re-review (max 2 rounds)
+     └── Sequential mode: single codex surface
+  4. Verifier: test/lint/typecheck validation
+  5. Replanner: on failure, LLM re-decomposes and retries
+  6. Post-K: verify knowledge integrity
+  7. Extract insights → store in Knowledge Plane
 ```
 
 ## cmux Workspace Model
 
 ```
 Orchestrator Workspace (user-facing):
-  └── Claude CLI (orchestrator) + Browser (optional)
+  ├── Claude CLI (orchestrator) — read/analyze/dispatch only
+  └── Browser (optional, verification)
 
-Agent Workspace (created per mission):
-  ├── codex-worker-0 ── parallel task execution
-  ├── codex-worker-1 ── parallel task execution
-  ├── codex-worker-2 ── parallel task execution
-  └── claude-reviewer ── review + fix loop
+Agent Workspace "agent-planner" (created at plan stage):
+  ├── codex-0 (main)  ── planner + reviewer (dual role)
+  ├── codex-1 (right) ── worker
+  ├── codex-2 (down-left)  ── worker
+  └── codex-3 (down-right) ── worker
 ```
 
-Surface split layout (balanced 2-column grid):
+- Orchestrator WS: coordination only, no codex surfaces
+- Agent WS: all codex work happens here, single workspace with 4 surfaces
+- Planner creates agent WS → executor reuses it via `_planner_runtime.workspace_id`
+- `cmux notify` = trigger (looks done), `clab review` = truth (actually verified)
+
+### Notification Polling Protocol
+
+```bash
+cmux clear-notifications          # 1. Clear stale
+cmux send --surface $S "$CMD"     # 2. Inject command
+sleep 15                          # 3. Wait for codex startup
+cmux clear-notifications          # 4. Clear startup noise
+# 5. Poll by surface_id (field 3), not by status
+for i in $(seq 1 120); do
+  sleep 4
+  cmux list-notifications | grep -q "$SURFACE_UUID" && break
+done
 ```
-[main]      [worker-0]
-[worker-1]  [worker-2]
-[reviewer]
-```
 
-- Orchestrator workspace: coordination only, no agent surfaces
-- Agent workspace: all codex/claude work happens here
-- Reasoning (planner/verifier): runs as subprocess, no workspace created
-- cmux notify = trigger, clab review = truth
+### Codex Prompting
 
-## Production Features
-
-- **Checkpointer**: Remote checkpoint storage via Control Plane HTTP API
-- **Human-in-the-loop**: Interrupt/resume via `/interrupts` API
-- **Streaming**: WebSocket → SSE event streaming to dashboards
-- **Retry/Compensation**: LangGraph RetryPolicy + LLM-based replanning
-- **Long-running Resume**: thread_id based checkpoint recovery
-- **Multi-worker**: Worker registry with capability-based scheduling
-- **Parallel Execution**: WorkerPool with balanced cmux surface layout, review loop with max 2 fix rounds
-- **Artifact Lineage**: Audit log + artifact tracking
+- Direct inline instructions preferred over prompt file references
+- Preamble: `"Do not produce a task list or plan. Execute now."`
+- Max ≤4 edits per prompt (more triggers planning mode)
+- End with: `"Modify files directly. Do not summarize or plan."`
 
 ## MCP Tools
 
@@ -143,6 +135,17 @@ Available via `mcp-server/server.py`:
 | `session_list` | List agent sessions |
 | `interrupt_list` / `interrupt_resolve` | Human-in-the-loop |
 
+## Production Features
+
+- **Checkpointer**: Remote checkpoint storage via Control Plane HTTP API
+- **Human-in-the-loop**: Interrupt/resume via `/interrupts` API
+- **SSE Streaming**: WebSocket → SSE event streaming to dashboards
+- **Retry/Replanning**: LangGraph RetryPolicy + LLM-based replanning
+- **Long-running Resume**: thread_id based checkpoint recovery
+- **Parallel Execution**: 4-surface codex WorkerPool with review loop
+- **Idle Detection**: TUI prompt detection instead of blind sleep
+- **Notification Filtering**: surface_id based polling, status-agnostic
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -151,10 +154,11 @@ Available via `mcp-server/server.py`:
 | LLM | Claude (Anthropic) / GPT (OpenAI) |
 | Control Plane | FastAPI + WebSocket + SSE |
 | Knowledge Server | Go + chi router |
-| CLI Execution | Claude Code CLI + Codex CLI |
+| CLI Execution | Codex CLI (primary) + Claude Code CLI (fallback) |
+| Runtime | cmux (workspace/surface multiplexer) |
 | Container | Docker |
-| Orchestration | Kubernetes (Kustomize) |
-| Domains | control.clab.dev, knowledge.clab.dev |
+| Orchestration | Kubernetes + ArgoCD (GitOps) |
+| Database | PostgreSQL |
 
 ## License
 
