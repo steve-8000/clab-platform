@@ -85,7 +85,7 @@ async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
                 state["cmux_workspace_id"] = existing
             else:
                 goal = state.get("goal", "mission")
-                ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
+                ws_id = await runtime.create_agent(agent_ws_name, workdir=workdir)
                 state["cmux_workspace_id"] = ws_id
 
     # Get or create surface for this engine (reused across tasks)
@@ -287,7 +287,7 @@ async def parallel_executor_node(state: AgentState) -> dict:
                 state["cmux_workspace_id"] = existing
             else:
                 goal = state.get("goal", "mission")
-                ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
+                ws_id = await runtime.create_agent(agent_ws_name, workdir=workdir)
                 state["cmux_workspace_id"] = ws_id
 
     # Report batch start to Control Plane
