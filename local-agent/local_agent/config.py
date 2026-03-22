@@ -84,17 +84,24 @@ async def _find_agent_workspace(runtime, agent_ws_name: str) -> str | None:
 
 
 async def _get_orchestrator_ws_name(runtime) -> str:
-    """Get the orchestrator workspace name from cmux (caller's workspace)."""
+    """Get orchestrator workspace name. Uses CMUX_WORKSPACE_ID env var (most reliable)."""
+    ws_id = os.environ.get("CMUX_WORKSPACE_ID", "")
+
+    if ws_id:
+        try:
+            workspaces = await runtime.cmux.workspace_list()
+            for ws in workspaces:
+                if ws.get("id") == ws_id:
+                    return ws.get("title", ws.get("name", "workspace"))
+        except Exception:
+            pass
+
+    # Fallback: use selected workspace
     try:
-        result = await runtime.cmux.identify()
-        caller = result.get("caller", result.get("focused", {}))
-        ws_ref = caller.get("workspace_ref", "")
         workspaces = await runtime.cmux.workspace_list()
         for ws in workspaces:
-            ref = ws.get("ref", ws.get("workspace_ref", ""))
-            ws_id = ws.get("id", ws.get("workspace_id", ""))
-            if ref == ws_ref or ws_id == ws_ref:
-                return ws.get("name", ws.get("title", "workspace"))
+            if ws.get("selected"):
+                return ws.get("title", ws.get("name", "workspace"))
     except Exception:
         pass
     return "workspace"

@@ -214,8 +214,9 @@ async def _mission_run(args: dict):
     cmd.append(goal)
 
     try:
+        env = os.environ.copy()
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=3600, cwd=LOCAL_AGENT_DIR,
+            cmd, capture_output=True, text=True, timeout=3600, cwd=LOCAL_AGENT_DIR, env=env,
         )
         output = proc.stdout
         if proc.returncode != 0:
