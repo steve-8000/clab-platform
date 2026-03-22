@@ -503,13 +503,17 @@ class CmuxRuntime:
         if not self.workspace_id:
             raise RuntimeError("No agent created — call create_agent() first")
 
-        from local_agent.config import _planner_engine_started
+        from local_agent.config import _planner_engine_started, _planner_runtime
+        planner_codex_surface = None
+        if _planner_engine_started and _planner_runtime:
+            planner_codex_surface = _planner_runtime.get_surface_id("codex")
         pool = WorkerPool(
             self.cmux,
             self.workspace_id,
             num_workers,
             registry=self.surfaces,
             reviewer_engine_started=_planner_engine_started,
+            reviewer_surface_id=planner_codex_surface,
         )
         await pool.initialize(workdir, system_prompt)
         self._worker_pool = pool

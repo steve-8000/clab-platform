@@ -325,12 +325,14 @@ class WorkerPool:
         num_workers: int = 3,
         registry: Any | None = None,
         reviewer_engine_started: bool = False,
+        reviewer_surface_id: str | None = None,
     ) -> None:
         self.cmux = cmux
         self.workspace_id = workspace_id
         self.num_workers = num_workers
         self._registry = registry  # SurfaceRegistry from CmuxRuntime
         self._reviewer_engine_started = reviewer_engine_started
+        self._reviewer_surface_id = reviewer_surface_id
         self.workers: list[Worker] = []
         self.reviewer: Worker | None = None
         self.review_loop: ReviewLoop | None = None
@@ -349,7 +351,11 @@ class WorkerPool:
             raise RuntimeError("No main surface found for workspace")
 
         # Reviewer gets the main surface (top-left, largest area)
-        reviewer_surface_id = main_surface_id
+        if self._reviewer_surface_id:
+            reviewer_surface_id = self._reviewer_surface_id
+            logger.info("Reviewer reusing planner codex surface: %s", reviewer_surface_id)
+        else:
+            reviewer_surface_id = main_surface_id
         try:
             await self.cmux.request(
                 "surface.rename",
