@@ -89,7 +89,8 @@ class Worker:
             await self.cmux.send_text(self.surface_id, "codex")
             await asyncio.sleep(1.0)
             await self.cmux.send_key(self.surface_id, "enter")
-            await asyncio.sleep(3)
+            # Wait for codex TUI to be ready (detect idle prompt instead of blind sleep)
+            await self._wait_for_engine_ready(timeout=15)
 
         elif self.engine == "claude":
             full_prompt = (
@@ -122,6 +123,29 @@ class Worker:
             self.worker_id,
             self.engine,
             self.surface_id,
+        )
+
+    async def _wait_for_engine_ready(self, timeout: float = 15) -> None:
+        """Wait until engine TUI shows idle prompt (› for codex, ❯ for claude)."""
+        import time as _time
+
+        start = _time.monotonic()
+        while _time.monotonic() - start < timeout:
+            output = await self.cmux.read_text(self.surface_id)
+            tail = output[-500:] if output else ""
+            # Codex ready: shows "›" prompt with model info footer
+            if self.engine == "codex" and "›" in tail and "gpt-" in tail.lower():
+                logger.debug("Worker-%d: codex TUI ready", self.worker_id)
+                return
+            # Claude ready: shows "❯" prompt
+            if self.engine == "claude" and "❯" in tail:
+                logger.debug("Worker-%d: claude TUI ready", self.worker_id)
+                return
+            await asyncio.sleep(1.0)
+        logger.warning(
+            "Worker-%d: engine ready timeout after %.0fs, proceeding anyway",
+            self.worker_id,
+            timeout,
         )
 
     @staticmethod
@@ -268,7 +292,7 @@ class ReviewLoop:
             f"Review this task completion.\n\n"
             f"Task: {task.get('title', '')}\n"
             f"Description: {task.get('description', '')[:500]}\n\n"
-            f"Changes (git diff):\n```\n{truncated}\n```\n\n"
+            f"Changes (git diff):\n---\n{truncated}\n---\n\n"
             f"If the task was completed correctly, respond with exactly: APPROVED\n"
             f"If fixes are needed, respond with: FIX: <specific instructions>"
         )

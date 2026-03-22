@@ -342,9 +342,24 @@ class CmuxRuntime:
             await self.cmux.send_text(surface_id, "codex")
             await asyncio.sleep(1.0)
             await self.cmux.send_key(surface_id, "enter")
-            await asyncio.sleep(3)
+            # Wait for codex TUI ready instead of blind sleep
+            await self._wait_for_codex_ready(surface_id, timeout=15)
 
         self.surfaces.mark_started(engine)
+
+    async def _wait_for_codex_ready(self, surface_id: str, timeout: float = 15) -> None:
+        """Wait until codex TUI shows idle prompt."""
+        import time as _time
+
+        start = _time.monotonic()
+        while _time.monotonic() - start < timeout:
+            output = await self.cmux.read_text(surface_id)
+            tail = output[-500:] if output else ""
+            if "›" in tail and "gpt-" in tail.lower():
+                logger.debug("Codex TUI ready on surface %s", surface_id)
+                return
+            await asyncio.sleep(1.0)
+        logger.warning("Codex ready timeout on surface %s after %.0fs", surface_id, timeout)
 
     async def write_prompt_file(self, instruction: str, workdir: str = "") -> str:
         """Write long prompt to project-local file, return reference instruction."""
