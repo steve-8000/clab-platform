@@ -10,7 +10,10 @@
       "Agent",
       "WebFetch",
       "WebSearch",
-      "mcp__clab__*"
+      "NotebookEdit",
+      "mcp__clab__*",
+      "mcp__clab-cmux__*",
+      "mcp__*"
     ],
     "deny": []
   }

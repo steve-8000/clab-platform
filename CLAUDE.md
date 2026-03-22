@@ -1,39 +1,72 @@
 # clab-platform — Claude Code Instructions
 
+## Architecture
+
+Three-layer multi-agent orchestration platform:
+
+- **Control Plane** (K8s/FastAPI): Threads, runs, checkpoints, interrupts, state machines, audit
+- **Knowledge Plane** (K8s/Go): Pre-K/Post-K, knowledge storage, insight extraction
+- **cmux Runtime Plane** (Local): Agent execution via cmux workspaces/surfaces/browser
+
+### cmux Runtime Model
+
+```
+Agent = cmux workspace (e.g., agent-auth, agent-reviewer)
+  ├─ Surface A: Claude CLI (design, review, reasoning)
+  ├─ Surface B: Codex CLI (implementation, code generation)
+  └─ Surface C: Browser (web interaction, local app verification)
+```
+
+- **cmux notify = trigger** ("looks done") — NOT source of truth
+- **clab review = truth** ("actually succeeded, failed, or waiting")
+- Agents run with full permissions: `--dangerously-skip-permissions`, `--full-auto`
+
 ## Available MCP Tools
 
-This project provides an MCP server (`clab`) with the following tools:
-
 ### Knowledge Tools
-- **knowledge_search** — Search the knowledge base for prior decisions, patterns, and insights
-- **knowledge_store** — Store a new knowledge entry for future reference
-- **knowledge_pre_k** — Retrieve relevant prior knowledge BEFORE starting work on a task
-- **knowledge_post_k** — Verify knowledge integrity AFTER completing work
+- **knowledge_search** — Search knowledge base
+- **knowledge_store** — Store decisions/patterns/insights
+- **knowledge_pre_k** — Retrieve prior knowledge BEFORE starting work
+- **knowledge_post_k** — Verify document integrity AFTER completing work
 
 ### Agent Tools
-- **mission_run** — Run a full development mission through the LangGraph agent (Plan → Execute → Verify → Replan loop)
+- **mission_run** — Run a full mission through the LangGraph agent
 
 ### Platform Tools
 - **platform_health** — Check health of all services
 - **session_list** — List agent sessions
-- **interrupt_list** — List pending human-in-the-loop requests
-- **interrupt_resolve** — Resolve a pending interrupt
+- **interrupt_list** / **interrupt_resolve** — Human-in-the-loop management
+
+## Autonomous Execution Rules
+
+1. Agents execute ALL tasks without asking for confirmation
+2. Permission prompts are auto-accepted (monitor.py handles this)
+3. Design questions are auto-resolved — agents pick the simplest approach
+4. Only stop when explicitly told: "stop", "중단", "그만"
 
 ## Workflow
 
-1. Before starting work, use `knowledge_pre_k` to check for prior knowledge
-2. After completing work, use `knowledge_post_k` to verify document integrity
-3. Store important decisions with `knowledge_store`
-4. For complex multi-step tasks, use `mission_run` to delegate to the LangGraph agent
+1. `knowledge_pre_k` — check for prior knowledge
+2. Plan and decompose tasks into waves
+3. Execute via cmux: `CmuxRuntime.create_agent()` → `allocate_surface()` → `inject_command()`
+4. Monitor completion via idle detection + notifications
+5. clab state machine verifies actual success/failure
+6. `knowledge_post_k` — verify document integrity
+7. Store insights with `knowledge_store`
 
-## Architecture
+## Key Paths
 
-- **Control Plane** (K8s): Session state, checkpoints, interrupts, workers, audit
-- **Knowledge Plane** (K8s): Knowledge storage, Pre-K/Post-K, insights
-- **Execution Plane** (Local): LangGraph agent, Claude/Codex CLI
+| Component | Path |
+|-----------|------|
+| Control Plane | `control-plane/` (Python/FastAPI) |
+| Knowledge Server | `knowledge-server/` (Go/chi) |
+| Knowledge Library | `knowledge/` (Python) |
+| Local Agent | `local-agent/` (Python/LangGraph) |
+| cmux Runtime | `local-agent/local_agent/cmux/` |
+| MCP Server | `mcp-server/server.py` |
 
 ## Environment
 
-Set these to point to your K8s services:
-- `CLAB_CONTROL_URL` — Control Plane URL (default: http://localhost:8000)
-- `CLAB_KNOWLEDGE_URL` — Knowledge Service URL (default: http://localhost:4007)
+- `CLAB_CONTROL_URL` — Control Plane (default: http://localhost:8000)
+- `CLAB_KNOWLEDGE_URL` — Knowledge Service (default: http://localhost:4007)
+- `CMUX_SOCKET_PATH` — cmux socket (default: ~/Library/Application Support/cmux/cmux.sock)

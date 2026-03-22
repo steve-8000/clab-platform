@@ -50,3 +50,8 @@ class AgentState(TypedDict):
     # Control
     iteration_count: int
     max_iterations: int
+
+    # cmux runtime (populated when cmux is available)
+    cmux_workspace_id: str
+    surface_map: dict  # task_id → surface_id
+    browser_surface_id: str
