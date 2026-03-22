@@ -46,23 +46,28 @@ async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
         await ProjectBootstrapper().provision(workdir)
         goal = state.get("goal", "mission")[:30]
         role = state.get("role_id", "agent")
-        ws_id = await runtime.create_agent(f"{role}-{goal}")
+        ws_id = await runtime.create_agent(f"{role}-{goal}", workdir=workdir)
         state["cmux_workspace_id"] = ws_id
 
-    # Allocate surface for this task
-    surface_id = await runtime.allocate_surface(engine, task_id=task_id)
+    # Get or create surface for this engine (reused across tasks)
+    engine_initialized = state.get("_engine_initialized", set())
+    surface_id = await runtime.get_or_create_surface(engine)
 
-    # Start engine (cd + launch CLI)
-    await runtime.start_engine(surface_id, engine, workdir, system_prompt=enriched_context)
+    # Start engine only on first use (cd + launch CLI)
+    if engine not in engine_initialized:
+        await runtime.start_engine(surface_id, engine, workdir, system_prompt=enriched_context)
+        engine_initialized.add(engine)
+        state["_engine_initialized"] = engine_initialized
 
-    # Inject task instruction
-    await runtime.inject_command(task_id, task["description"])
+    # Inject task instruction into the engine's surface
+    await runtime.inject_command(engine, task["description"])
 
     # Collect output (raw — no success/failure judgment)
-    result = await runtime.collect_output(task_id, timeout=300)
+    result = await runtime.collect_output(engine, timeout=300, task_id=task_id)
 
     # Signal completion (trigger only — clab review decides actual status)
-    await runtime.signal_completion(task_id, result.output[-100:] if result.output else "")
+    task_title = task.get("title", task_id)
+    await runtime.signal_completion(engine, task_title, result.output[-100:] if result.output else "")
 
     # Update surface_map in state
     surface_map = state.get("surface_map", {})

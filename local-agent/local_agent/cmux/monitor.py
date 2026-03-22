@@ -71,6 +71,8 @@ class CompletionMonitor:
         last_change_at = time.monotonic()
         start = time.monotonic()
 
+        # Phase 1: Wait for engine to actually start (produce meaningful output)
+        engine_started = False
         while time.monotonic() - start < timeout:
             output = await self.cmux.read_text(surface_id)
 
@@ -80,6 +82,15 @@ class CompletionMonitor:
 
                 # Auto-respond to any permission prompts (autonomous agent mode)
                 await self._auto_respond_prompts(surface_id, output)
+
+            # Don't check idle until engine has produced substantial output
+            if not engine_started:
+                if len(output.strip()) > 50:
+                    engine_started = True
+                    logger.debug("Engine started producing output (%d chars)", len(output))
+                else:
+                    await asyncio.sleep(self.POLL_INTERVAL)
+                    continue
 
             tail = output[-1500:].rstrip()
 

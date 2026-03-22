@@ -71,10 +71,10 @@ class CmuxRuntime:
     Usage:
         runtime = CmuxRuntime(client)
         await runtime.create_agent("agent-auth")
-        await runtime.allocate_surface("claude", task_id="t1")
-        await runtime.allocate_surface("codex", task_id="t2")
-        await runtime.inject_command("t1", "implement auth module")
-        result = await runtime.collect_output("t1")
+        surface = await runtime.get_or_create_surface("claude")
+        await runtime.start_engine(surface, "claude", workdir)
+        await runtime.inject_command("claude", "implement auth module")
+        result = await runtime.collect_output("claude")
         # result.output + result.idle_detected → pass to clab review
     """
 
@@ -83,54 +83,94 @@ class CmuxRuntime:
         self.monitor = CompletionMonitor(client)
         self.workspace_id: str | None = None
         self.workspace_name: str = ""
-        self.surfaces: dict[str, SurfaceInfo] = {}  # task_id or engine → SurfaceInfo
+        # Engine-level surfaces — ONE surface per engine, reused across tasks
+        self._engine_surfaces: dict[str, str] = {}  # engine → surface_id
         self._browser: CmuxBrowser | None = None
+        self._right_surface_id: str | None = None
 
     # ---- Workspace (= Agent) lifecycle ----
 
-    async def create_agent(self, name: str) -> str:
-        """Create a cmux workspace representing one agent.
+    async def create_agent(self, name: str, workdir: str = "") -> str:
+        """Get or create a cmux workspace for this agent.
 
-        Args:
-            name: Agent name (e.g., "agent-auth", "agent-reviewer")
-
-        Returns:
-            workspace_id
+        Reuses an existing workspace matching the workdir if one exists.
+        Only creates a new workspace if none is found.
+        One workspace = one agent. Multiple surfaces within it = parallel channels.
         """
+        # Try to reuse the currently selected/active workspace first
+        try:
+            current = await self.cmux.workspace_current()
+            if current:
+                self.workspace_id = current.get("id", current.get("workspace_id"))
+                self.workspace_name = name
+                # Rename workspace to reflect the project/agent name
+                try:
+                    await self.cmux.workspace_rename(name[:40], self.workspace_id)
+                except Exception:
+                    pass
+                logger.info("Reusing current workspace: %s (renamed to %s)", self.workspace_id, name)
+                return self.workspace_id
+        except Exception as exc:
+            logger.debug("Failed to get current workspace: %s", exc)
+
+        # Also try to reuse current workspace if workspace_id is already set
+        if self.workspace_id:
+            logger.info("Reusing existing workspace: %s", self.workspace_id)
+            return self.workspace_id
+
+        # Create new workspace only if nothing to reuse
         ws = await self.cmux.workspace_create(name[:40])
         self.workspace_id = ws.get("id", ws.get("workspace_id"))
         self.workspace_name = name
-        logger.info("Agent created: workspace=%s name=%s", self.workspace_id, name)
+        logger.info("New workspace created: %s (%s)", self.workspace_id, name)
         return self.workspace_id
 
     # ---- Surface (= Execution Channel) allocation ----
 
-    async def allocate_surface(self, engine: str, task_id: str | None = None) -> str:
-        """Allocate a surface within the agent's workspace.
+    async def get_or_create_surface(self, engine: str) -> str:
+        """Get existing surface for this engine, or create one.
 
-        Args:
-            engine: "claude", "codex", "browser", or "shell"
-            task_id: Optional task identifier to map this surface to
+        Surface model: ONE surface per engine type, reused across all tasks.
+          - codex surface: all codex tasks run here sequentially
+          - claude surface: all claude tasks run here sequentially
+          - browser surface: all browser tasks run here
 
-        Returns:
-            surface_id
+        Max surfaces: Main(left) + codex + claude + browser = 4 total
         """
         if not self.workspace_id:
             raise RuntimeError("No agent created — call create_agent() first")
 
-        key = task_id or engine
-
         if engine == "browser":
             return await self._allocate_browser()
 
-        surface = await self.cmux.surface_create(self.workspace_id)
+        # Return existing surface if already created for this engine
+        if engine in self._engine_surfaces:
+            surface_id = self._engine_surfaces[engine]
+            logger.debug("Reusing %s surface: %s", engine, surface_id)
+            return surface_id
+
+        # Create new surface — first one splits RIGHT, second splits DOWN
+        if self._right_surface_id:
+            surface = await self.cmux.surface_split("down", self.workspace_id, self._right_surface_id)
+        else:
+            surface = await self.cmux.surface_split("right", self.workspace_id)
+
         surface_id = surface.get("surface_id", surface.get("id"))
-        self.surfaces[key] = SurfaceInfo(
-            surface_id=surface_id,
-            engine=engine,
-            task_id=task_id,
-        )
-        logger.info("Surface allocated: key=%s surface=%s engine=%s", key, surface_id, engine)
+        if not self._right_surface_id:
+            self._right_surface_id = surface_id
+
+        self._engine_surfaces[engine] = surface_id
+
+        # Rename surface tab to show engine name
+        try:
+            await self.cmux.request("surface.rename", {
+                "surface_id": surface_id,
+                "name": f"worker:{engine}",
+            })
+        except Exception:
+            pass  # rename might not be supported as RPC
+
+        logger.info("Created %s surface: %s", engine, surface_id)
         return surface_id
 
     async def _allocate_browser(self) -> str:
@@ -139,15 +179,12 @@ class CmuxRuntime:
             return self._browser.surface_id
         self._browser = CmuxBrowser(self.cmux, self.workspace_id)
         surface_id = await self._browser.open()
-        self.surfaces["browser"] = SurfaceInfo(
-            surface_id=surface_id, engine="browser"
-        )
+        self._engine_surfaces["browser"] = surface_id
         return surface_id
 
-    def get_surface_id(self, key: str) -> str | None:
-        """Look up surface_id by task_id or engine name."""
-        info = self.surfaces.get(key)
-        return info.surface_id if info else None
+    def get_surface_id(self, engine: str) -> str | None:
+        """Look up surface_id by engine name."""
+        return self._engine_surfaces.get(engine)
 
     # ---- Command injection ----
 
@@ -175,8 +212,10 @@ class CmuxRuntime:
             ]
             if escaped:
                 cmd_parts.extend(["--append-system-prompt", f"'{escaped}'"])
-            await self.cmux.send_text(surface_id, " ".join(cmd_parts) + "\n")
-            await asyncio.sleep(2)
+            await self.cmux.send_text(surface_id, " ".join(cmd_parts))
+            await asyncio.sleep(1.0)
+            await self.cmux.send_key(surface_id, "enter")
+            await asyncio.sleep(3)
 
             # Handle bypass permissions prompt (auto-accept)
             if await self.monitor.detect_bypass_prompt(surface_id, timeout=5):
@@ -185,75 +224,80 @@ class CmuxRuntime:
                 await asyncio.sleep(1)
 
         elif engine == "codex":
-            await self.cmux.send_text(surface_id, "codex --full-auto\n")
-            await asyncio.sleep(2)
+            await self.cmux.send_text(surface_id, "codex")
+            await asyncio.sleep(1.0)
+            await self.cmux.send_key(surface_id, "enter")
+            await asyncio.sleep(3)
 
-    async def inject_command(self, key: str, instruction: str) -> None:
-        """Send a command/instruction to a surface.
+    async def inject_command(self, engine: str, instruction: str) -> None:
+        """Send a command/instruction to an engine's surface, then press Enter.
 
-        Args:
-            key: task_id or engine name to look up the surface
-            instruction: text to send
+        For TUI apps (Codex/Claude), send_text + send_key enter must be separate.
         """
-        info = self.surfaces.get(key)
-        if not info:
-            raise KeyError(f"No surface found for key: {key}")
-        await self.cmux.send_text(info.surface_id, instruction + "\n")
+        surface_id = self._engine_surfaces.get(engine)
+        if not surface_id:
+            raise KeyError(f"No surface found for engine: {engine}")
+        await self.cmux.send_text(surface_id, instruction)
+        await asyncio.sleep(1.0)
+        await self.cmux.send_key(surface_id, "enter")
 
-    async def inject_key(self, key: str, keyseq: str) -> None:
-        """Send a key sequence (e.g., 'C-c') to a surface."""
-        info = self.surfaces.get(key)
-        if not info:
-            raise KeyError(f"No surface found for key: {key}")
-        await self.cmux.send_key(info.surface_id, keyseq)
+    async def inject_key(self, engine: str, keyseq: str) -> None:
+        """Send a key sequence (e.g., 'C-c') to an engine's surface."""
+        surface_id = self._engine_surfaces.get(engine)
+        if not surface_id:
+            raise KeyError(f"No surface found for engine: {engine}")
+        await self.cmux.send_key(surface_id, keyseq)
 
     # ---- State collection (raw — no success/failure judgment) ----
 
     async def collect_output(
         self,
-        key: str,
+        engine: str,
         timeout: float = 300,
+        task_id: str | None = None,
     ) -> TaskResult:
         """Wait for engine idle and collect raw output.
 
         Returns TaskResult with raw output. Does NOT determine success/failure.
-        The caller (clab state machine) must evaluate the output.
         """
-        info = self.surfaces.get(key)
-        if not info:
-            raise KeyError(f"No surface found for key: {key}")
+        surface_id = self._engine_surfaces.get(engine)
+        if not surface_id:
+            raise KeyError(f"No surface found for engine: {engine}")
 
         idle_detected = True
         try:
             output = await self.monitor.wait_for_idle(
-                info.surface_id, info.engine, timeout=timeout
+                surface_id, engine, timeout=timeout
             )
         except TimeoutError:
-            output = await self.cmux.read_text(info.surface_id)
+            output = await self.cmux.read_text(surface_id)
             idle_detected = False
-            logger.warning("Timeout collecting output for %s", key)
+            logger.warning("Timeout collecting output for %s", engine)
 
         return TaskResult(
             output=output,
-            surface_id=info.surface_id,
-            engine=info.engine,
+            surface_id=surface_id,
+            engine=engine,
             idle_detected=idle_detected,
-            task_id=info.task_id,
+            task_id=task_id,
         )
 
-    async def read_current_output(self, key: str) -> str:
+    async def read_current_output(self, engine: str) -> str:
         """Read current terminal content without waiting for idle."""
-        info = self.surfaces.get(key)
-        if not info:
+        surface_id = self._engine_surfaces.get(engine)
+        if not surface_id:
             return ""
-        return await self.cmux.read_text(info.surface_id)
+        return await self.cmux.read_text(surface_id)
 
     async def run_shell_command(self, surface_id: str, command: str) -> str:
         """Run a shell command and wait for prompt return.
 
         Used for verification commands (pytest, ruff, etc.) in an existing surface.
+        For TUI apps, send_text + send_key enter must be separate.
         """
-        await self.cmux.send_text(surface_id, command + "\n")
+        await self.cmux.send_text(surface_id, command)
+        await asyncio.sleep(1.0)
+        await self.cmux.send_key(surface_id, "enter")
         return await self.monitor.wait_for_shell_prompt(surface_id, timeout=60)
 
     # ---- Browser interaction (agent interaction layer) ----
@@ -277,38 +321,39 @@ class CmuxRuntime:
 
     # ---- Notifications (trigger, not truth) ----
 
-    async def signal_completion(self, key: str, message: str = "") -> None:
+    async def signal_completion(self, engine: str, task_title: str = "", message: str = "") -> None:
         """Send a cmux notification that a task appears complete.
 
         This is a TRIGGER only — clab must still verify actual completion.
         """
-        info = self.surfaces.get(key)
-        title = f"[{self.workspace_name}] {key}"
+        surface_id = self._engine_surfaces.get(engine)
+        title = f"[{self.workspace_name}] {task_title or engine}"
         await self.cmux.notify(
             title=title[:50],
             body=message[:200] or "Task appears complete",
-            surface_id=info.surface_id if info else None,
+            surface_id=surface_id,
         )
 
     # ---- Cleanup ----
 
-    async def release_surface(self, key: str) -> None:
-        """Close a specific surface."""
-        info = self.surfaces.pop(key, None)
-        if info:
+    async def release_surface(self, engine: str) -> None:
+        """Close a specific engine's surface."""
+        surface_id = self._engine_surfaces.pop(engine, None)
+        if surface_id:
             try:
-                await self.cmux.surface_close(info.surface_id)
+                await self.cmux.surface_close(surface_id)
             except Exception as exc:
-                logger.debug("Failed to close surface %s: %s", info.surface_id, exc)
+                logger.debug("Failed to close surface %s: %s", surface_id, exc)
+        if surface_id == self._right_surface_id:
+            self._right_surface_id = None
 
     async def shutdown(self) -> None:
         """Release all surfaces and browser. Workspace remains for inspection."""
         if self._browser:
             await self._browser.close()
             self._browser = None
-            self.surfaces.pop("browser", None)
 
-        for key in list(self.surfaces):
-            await self.release_surface(key)
+        for engine in list(self._engine_surfaces):
+            await self.release_surface(engine)
 
         logger.info("Runtime shutdown: workspace=%s", self.workspace_id)

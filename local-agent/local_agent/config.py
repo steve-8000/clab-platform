@@ -32,16 +32,40 @@ def get_config() -> AgentConfig:
         )
     return _config
 
-def get_model():
-    """Get LLM based on config."""
-    config = get_config()
-    provider = config.llm_provider
+async def invoke_cli(system_prompt: str, user_prompt: str, timeout: float = 120) -> str:
+    """Invoke Claude CLI for LLM reasoning. Uses claude --print which handles its own auth.
 
-    if provider == "openai":
-        from langchain_openai import ChatOpenAI
-        model_name = config.llm_model or "gpt-4o"
-        return ChatOpenAI(model=model_name)
-    else:
-        from langchain_anthropic import ChatAnthropic
-        model_name = config.llm_model or "claude-sonnet-4-20250514"
-        return ChatAnthropic(model=model_name)
+    This replaces direct Anthropic/OpenAI API calls. The CLI manages
+    authentication internally, so no API keys are needed in our code.
+    """
+    import asyncio
+    import shutil
+
+    full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
+
+    # Try Claude CLI first (preferred)
+    if shutil.which("claude"):
+        proc = await asyncio.create_subprocess_exec(
+            "claude", "--print", "-p", full_prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=get_config().workdir,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        output = stdout.decode("utf-8", errors="replace")
+        if proc.returncode != 0:
+            output += f"\nSTDERR:\n{stderr.decode('utf-8', errors='replace')}"
+        return output
+
+    # Fallback to Codex CLI
+    if shutil.which("codex"):
+        proc = await asyncio.create_subprocess_exec(
+            "codex", "--quiet", "-p", full_prompt,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=get_config().workdir,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return stdout.decode("utf-8", errors="replace")
+
+    raise RuntimeError("Neither 'claude' nor 'codex' CLI found in PATH")

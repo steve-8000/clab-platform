@@ -123,6 +123,12 @@ class CmuxClient:
     async def workspace_current(self) -> dict:
         return await self.request("workspace.current")
 
+    async def workspace_rename(self, name: str, workspace_id: str | None = None) -> None:
+        params = {"name": name}
+        if workspace_id:
+            params["workspace_id"] = workspace_id
+        await self.request("workspace.rename", params)
+
     # ---- Surface ----
     async def surface_create(self, workspace_id: str | None = None) -> dict:
         params = {}
@@ -130,10 +136,12 @@ class CmuxClient:
             params["workspace_id"] = workspace_id
         return await self.request("surface.create", params)
 
-    async def surface_split(self, direction: str = "right", workspace_id: str | None = None) -> dict:
+    async def surface_split(self, direction: str = "right", workspace_id: str | None = None, surface_id: str | None = None) -> dict:
         params = {"direction": direction}
         if workspace_id:
             params["workspace_id"] = workspace_id
+        if surface_id:
+            params["surface_id"] = surface_id
         return await self.request("surface.split", params)
 
     async def surface_list(self, workspace_id: str | None = None) -> list[dict]:
@@ -157,7 +165,7 @@ class CmuxClient:
         await self.request("surface.send_key", {"surface_id": surface_id, "key": key})
 
     async def read_text(self, surface_id: str) -> str:
-        result = await self.request("debug.terminal.read_text", {"surface_id": surface_id})
+        result = await self.request("surface.read_text", {"surface_id": surface_id})
         return result.get("text", "")
 
     # ---- Browser (agent-browser API) ----

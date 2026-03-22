@@ -11,13 +11,12 @@ def build_agent_graph(checkpointer=None, interrupt_before_execute: bool = False)
         -> (failure? -> replanner -> select_task)
     """
     from langgraph.graph import StateGraph, START, END
-    from langgraph.types import RetryPolicy
-    from local_agent.graph.state import AgentState
-    from local_agent.graph.planner import planner_node
-    from local_agent.graph.executor import executor_node
-    from local_agent.graph.verifier import verifier_node
-    from local_agent.graph.replanner import replanner_node
-    from local_agent.graph.knowledge import pre_k_node, post_k_node, insight_node
+    from graph.state import AgentState
+    from graph.planner import planner_node
+    from graph.executor import executor_node
+    from graph.verifier import verifier_node
+    from graph.replanner import replanner_node
+    from graph.knowledge import pre_k_node, post_k_node, insight_node
 
     builder = StateGraph(AgentState)
 
@@ -63,12 +62,6 @@ def build_agent_graph(checkpointer=None, interrupt_before_execute: bool = False)
         compile_kwargs["checkpointer"] = checkpointer
     if interrupt_before_execute:
         compile_kwargs["interrupt_before"] = ["executor"]
-
-    compile_kwargs["retry_policy"] = [RetryPolicy(
-        initial_interval=2.0,
-        backoff_factor=2.0,
-        max_attempts=3,
-    )]
 
     return builder.compile(**compile_kwargs)
 

@@ -1,11 +1,14 @@
-"""Planner node: decomposes a goal into a task graph using the orchestrator LLM."""
+"""Planner node: decomposes a goal into a task list using Claude CLI."""
 from __future__ import annotations
 import json
-from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
+import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 PLANNER_SYSTEM_PROMPT = """You are a development planner. Given a goal and context, decompose it into concrete executable tasks.
 
-Output a JSON array of tasks:
+Output ONLY a JSON array of tasks (no other text):
 [
   {"id": "1", "title": "short title", "description": "detailed prompt for Claude/Codex CLI", "engine": "claude|codex"},
   ...
@@ -21,35 +24,25 @@ Rules:
 """
 
 async def planner_node(state: dict) -> dict:
-    """Decompose goal into task list using LLM."""
-    from local_agent.config import get_model
+    """Decompose goal into task list using Claude CLI."""
+    from local_agent.config import invoke_cli
 
-    model = get_model()
+    context = state.get("enriched_context", "") or "No prior context."
+    user_prompt = f"Goal: {state['goal']}\n\nContext:\n{context}"
 
-    context_parts = []
-    if state.get("enriched_context"):
-        context_parts.append(state["enriched_context"])
+    response = await invoke_cli(PLANNER_SYSTEM_PROMPT, user_prompt)
+    logger.info("Planner response length: %d chars", len(response))
 
-    messages = [
-        SystemMessage(content=PLANNER_SYSTEM_PROMPT),
-        HumanMessage(content=f"Goal: {state['goal']}\n\nContext:\n{chr(10).join(context_parts) if context_parts else 'No prior context.'}")
-    ]
-
-    response = await model.ainvoke(messages)
-
-    # Parse task list from response
-    tasks = _parse_tasks(response.content)
+    tasks = _parse_tasks(response)
+    logger.info("Planned %d tasks", len(tasks))
 
     return {
         "plan": tasks,
         "current_task_index": 0,
-        "messages": [response],
     }
 
 def _parse_tasks(content: str) -> list:
-    """Extract JSON task array from LLM response."""
-    # Try to find JSON array in response
-    import re
+    """Extract JSON task array from CLI response."""
     match = re.search(r'\[[\s\S]*\]', content)
     if match:
         try:
@@ -68,12 +61,11 @@ def _parse_tasks(content: str) -> list:
             ]
         except json.JSONDecodeError:
             pass
-    # Fallback: single task
     return [{
         "id": "1",
         "title": "Execute goal",
         "description": content,
-        "engine": "claude",
+        "engine": "codex",
         "status": "pending",
         "result": "",
         "attempt": 0,
