@@ -6,10 +6,10 @@ Architecture:
   ReviewLoop uses the Codex reviewer surface to approve or request fixes.
 
   Surface layout:
-    right split → codex-worker-0
+    main (top-left) → codex-reviewer
+    right split from main → codex-worker-0
     down split from main → codex-worker-1
     down split from worker-0 → codex-worker-2
-    down split from worker-1 → codex-reviewer
 """
 
 from __future__ import annotations
@@ -29,6 +29,27 @@ from .monitor import CompletionMonitor
 # (executor.py imports WorkerPool from this module)
 
 logger = logging.getLogger(__name__)
+
+
+async def _get_git_diff(workdir: str) -> str:
+    """Get git diff of unstaged + staged changes in the working directory."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "diff", "HEAD"],
+            capture_output=True, text=True, timeout=10, cwd=workdir,
+        )
+        diff = result.stdout.strip()
+        if not diff:
+            # Try just unstaged
+            result = subprocess.run(
+                ["git", "diff"],
+                capture_output=True, text=True, timeout=10, cwd=workdir,
+            )
+            diff = result.stdout.strip()
+        return diff if diff else "(no changes detected)"
+    except Exception as e:
+        return f"(git diff failed: {e})"
 
 
 class WorkerState(enum.Enum):
@@ -176,14 +197,15 @@ class ReviewLoop:
 
     MAX_FIX_ROUNDS = 2
 
-    def __init__(self, reviewer_worker: Worker) -> None:
+    def __init__(self, reviewer_worker: Worker, workdir: str = "") -> None:
         self.reviewer = reviewer_worker
+        self._workdir = workdir
         self._review_lock = asyncio.Lock()
 
-    async def review(self, task: dict, worker_output: str) -> ReviewResult:
+    async def review(self, task: dict, worker_output: str, git_diff: str = "") -> ReviewResult:
         """Send task output to reviewer and get approval/fix decision."""
         async with self._review_lock:
-            prompt = self._build_review_prompt(task, worker_output)
+            prompt = self._build_review_prompt(task, worker_output, git_diff)
             result = await self.reviewer.inject_and_collect(
                 prompt, timeout=120, task_id=task.get("id")
             )
@@ -194,12 +216,13 @@ class ReviewLoop:
         task: dict,
         worker: Worker,
         initial_output: str,
+        git_diff: str = "",
     ) -> tuple[ReviewResult, str]:
         """Full review loop: review -> (fix -> re-review)* until approved or max rounds."""
         output = initial_output
 
         for round_num in range(self.MAX_FIX_ROUNDS + 1):
-            review_result = await self.review(task, output)
+            review_result = await self.review(task, output, git_diff)
 
             if review_result.approved:
                 logger.info(
@@ -228,17 +251,21 @@ class ReviewLoop:
                 review_result.feedback, timeout=300, task_id=task.get("id")
             )
             output = fix_result.output
+            # Re-fetch git diff after fix
+            if self._workdir:
+                git_diff = await _get_git_diff(self._workdir)
 
         # Should not reach here, but just in case
         return ReviewResult(approved=True, feedback="", task_id=task.get("id", "")), output
 
-    def _build_review_prompt(self, task: dict, output: str) -> str:
-        truncated = output[-3000:] if len(output) > 3000 else output
+    def _build_review_prompt(self, task: dict, output: str, git_diff: str = "") -> str:
+        review_content = git_diff if git_diff and git_diff != "(no changes detected)" else output[-3000:]
+        truncated = review_content[-4000:] if len(review_content) > 4000 else review_content
         return (
             f"Review this task completion.\n\n"
             f"Task: {task.get('title', '')}\n"
             f"Description: {task.get('description', '')[:500]}\n\n"
-            f"Output:\n{truncated}\n\n"
+            f"Changes (git diff):\n```\n{truncated}\n```\n\n"
             f"If the task was completed correctly, respond with exactly: APPROVED\n"
             f"If fixes are needed, respond with: FIX: <specific instructions>"
         )
@@ -259,8 +286,9 @@ class WorkerPool:
     """Pool of N Codex workers + 1 Codex reviewer.
 
     Surface layout within one workspace:
+      reviewer occupies main surface (top-left)
       right split → codex-worker-0
-      down splits → codex-worker-1, codex-worker-2, codex-reviewer
+      down splits → codex-worker-1, codex-worker-2
     """
 
     def __init__(
@@ -279,24 +307,40 @@ class WorkerPool:
         self.workers: list[Worker] = []
         self.reviewer: Worker | None = None
         self.review_loop: ReviewLoop | None = None
+        self._workdir = ""
         self._initialized = False
 
     async def initialize(self, workdir: str, system_prompt: str = "") -> None:
         """Create all surfaces and start engines."""
         if self._initialized:
             return
+        self._workdir = workdir
 
         surfaces = await self.cmux.surface_list(self.workspace_id)
         main_surface_id = surfaces[0].get("surface_id", surfaces[0].get("id")) if surfaces else None
         if not main_surface_id:
             raise RuntimeError("No main surface found for workspace")
 
-        surface_0 = await self.cmux.surface_split("right", self.workspace_id, main_surface_id)
+        # Reviewer gets the main surface (top-left, largest area)
+        reviewer_surface_id = main_surface_id
+        try:
+            await self.cmux.request(
+                "surface.rename",
+                {"surface_id": reviewer_surface_id, "name": "codex-reviewer"},
+            )
+        except Exception:
+            pass
+
+        # Split workers from reviewer surface (balanced 2-column grid)
+        # Step 1: reviewer → split right → w0
+        surface_0 = await self.cmux.surface_split("right", self.workspace_id, reviewer_surface_id)
         w0_id = surface_0.get("surface_id", surface_0.get("id"))
 
-        surface_1 = await self.cmux.surface_split("down", self.workspace_id, main_surface_id)
+        # Step 2: reviewer → split down → w1
+        surface_1 = await self.cmux.surface_split("down", self.workspace_id, reviewer_surface_id)
         w1_id = surface_1.get("surface_id", surface_1.get("id"))
 
+        # Step 3: w0 → split down → w2
         surface_2 = await self.cmux.surface_split("down", self.workspace_id, w0_id)
         w2_id = surface_2.get("surface_id", surface_2.get("id"))
 
@@ -325,17 +369,7 @@ class WorkerPool:
             except Exception:
                 pass
 
-        # Create or reuse codex reviewer surface
-        reviewer_surface = await self.cmux.surface_split("down", self.workspace_id, w1_id)
-        reviewer_surface_id = reviewer_surface.get("surface_id", reviewer_surface.get("id"))
-        try:
-            await self.cmux.request(
-                "surface.rename",
-                {"surface_id": reviewer_surface_id, "name": "codex-reviewer"},
-            )
-        except Exception:
-            pass
-
+        # Reviewer on main surface (already allocated above)
         reviewer_monitor = CompletionMonitor(self.cmux)
         self.reviewer = Worker(
             worker_id=-1,
@@ -344,12 +378,11 @@ class WorkerPool:
             monitor=reviewer_monitor,
             cmux=self.cmux,
         )
-        self.review_loop = ReviewLoop(self.reviewer)
+        self.review_loop = ReviewLoop(self.reviewer, workdir=workdir)
 
         if self._registry:
-            owned = True
             self._registry.register(
-                "codex-reviewer", reviewer_surface_id, "codex", owned=owned
+                "codex-reviewer", reviewer_surface_id, "codex", owned=False
             )
 
         # Start all engines in parallel
@@ -388,9 +421,10 @@ class WorkerPool:
                 )
 
                 if self.review_loop and task_result.idle_detected:
+                    git_diff = await _get_git_diff(self._workdir)
                     _review_result, final_output = (
                         await self.review_loop.review_and_fix(
-                            task, worker, task_result.output
+                            task, worker, task_result.output, git_diff=git_diff
                         )
                     )
                     task_result = TaskResult(
@@ -426,10 +460,8 @@ class WorkerPool:
                 )
 
         if self.reviewer:
-            try:
-                await self.cmux.surface_close(self.reviewer.surface_id)
-            except Exception as exc:
-                logger.debug("Failed to close reviewer: %s", exc)
+            # Reviewer uses main surface — do not close it
+            pass
 
         self.workers.clear()
         self.reviewer = None
