@@ -50,9 +50,8 @@ async def cleanup_cmux_runtime():
         _cmux_runtime = None
     _cmux_worker_pool = None
     try:
-        import local_agent.config as cfg
-
-        cfg._planner_engine_started = False
+        from local_agent.config import cleanup_planner_runtime
+        await cleanup_planner_runtime()
     except Exception:
         pass
 

@@ -210,6 +210,7 @@ class CmuxRuntime:
                     except Exception:
                         pass
                     logger.info("Reusing current workspace as orchestrator: %s (renamed to %s)", self.workspace_id, name)
+                    return self.workspace_id
             except Exception as exc:
                 logger.debug("Failed to get current workspace: %s", exc)
 

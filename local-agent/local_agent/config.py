@@ -15,6 +15,7 @@ class AgentConfig:
     interrupt_before_execute: bool = False
 
 _config: AgentConfig | None = None
+_planner_runtime = None
 _planner_engine_started = False
 
 def configure(config: AgentConfig) -> None:
@@ -33,12 +34,30 @@ def get_config() -> AgentConfig:
         )
     return _config
 
-async def invoke_cli(system_prompt: str, user_prompt: str, timeout: float = 120) -> str:
-    """Invoke LLM for reasoning. Uses orchestrator's cmux surface if available, subprocess fallback."""
-    try:
-        from local_agent.graph.executor import _get_cmux_runtime
+async def _get_planner_runtime():
+    """Get or create a dedicated CmuxRuntime for planner/reasoning. Separate from executor."""
+    global _planner_runtime
+    if _planner_runtime is not None:
+        return _planner_runtime
 
-        runtime = await _get_cmux_runtime()
+    import shutil
+    if not shutil.which("cmux"):
+        return None
+
+    try:
+        from local_agent.cmux import CmuxClient, CmuxRuntime
+        client = CmuxClient()
+        await client.connect()
+        _planner_runtime = CmuxRuntime(client)
+        return _planner_runtime
+    except Exception:
+        return None
+
+
+async def invoke_cli(system_prompt: str, user_prompt: str, timeout: float = 120) -> str:
+    """Invoke LLM for reasoning. Uses dedicated planner cmux surface, subprocess fallback."""
+    try:
+        runtime = await _get_planner_runtime()
         if runtime:
             return await _invoke_via_cmux(runtime, system_prompt, user_prompt, timeout)
     except Exception:
@@ -47,13 +66,7 @@ async def invoke_cli(system_prompt: str, user_prompt: str, timeout: float = 120)
 
 
 async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeout: float) -> str:
-    """Use the orchestrator's existing cmux workspace for LLM reasoning.
-
-    Reuses the current workspace (reuse_current=True) instead of creating a new one.
-    This keeps the planner running in the orchestrator's window.
-    """
-    import asyncio
-
+    """Use orchestrator's cmux workspace for reasoning. Never creates a new workspace."""
     global _planner_engine_started
 
     workdir = get_config().workdir
@@ -72,6 +85,19 @@ async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeou
 
     result = await runtime.collect_output("claude", timeout=timeout)
     return result.output
+
+
+async def cleanup_planner_runtime():
+    """Shutdown planner runtime. Called after mission."""
+    global _planner_runtime, _planner_engine_started
+    if _planner_runtime:
+        try:
+            # Don't shutdown surfaces — orchestrator workspace stays alive
+            await _planner_runtime.cmux.disconnect()
+        except Exception:
+            pass
+        _planner_runtime = None
+    _planner_engine_started = False
 
 
 async def _invoke_via_subprocess(system_prompt: str, user_prompt: str, timeout: float) -> str:
