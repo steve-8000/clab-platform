@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -e /app/packages/codegraph || true
 # Install CGC from vendor
 COPY vendor/codegraphcontext /app/vendor/codegraphcontext
 RUN pip install --no-cache-dir -e /app/vendor/codegraphcontext || true
+RUN pip install --no-cache-dir "tree-sitter-language-pack==0.13.0"
 
 # Copy application code
 COPY apps/code-intel /app/code_intel
