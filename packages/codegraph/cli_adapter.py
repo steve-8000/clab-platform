@@ -270,8 +270,11 @@ class CgcCliEngineAdapter(CodeIntelEngine):
             parts = [p.strip() for p in cleaned.split("|") if p.strip()]
             if len(parts) >= 3:
                 name_val = parts[0]
+                # Skip header rows
+                if name_val.lower() in ("name", "metric", "function"):
+                    continue
                 kind_val = parts[1] if len(parts) > 1 else ""
-                location = parts[2] if len(parts) > 2 else ""
+                location = " ".join(parts[2:]) if len(parts) > 2 else ""
                 file_p, line_n = _parse_location(location)
                 results.append(
                     SymbolResult(
