@@ -108,7 +108,7 @@ class Worker:
         from .executor import TaskResult
 
         self.state = WorkerState.RUNNING
-
+        self.monitor.reset_prompt_tracking(self.surface_id)
         await self.cmux.send_text(self.surface_id, instruction)
         await asyncio.sleep(1.0)
         await self.cmux.send_key(self.surface_id, "enter")

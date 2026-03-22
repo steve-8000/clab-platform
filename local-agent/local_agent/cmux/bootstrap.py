@@ -38,6 +38,19 @@ CLAUDE_SETTINGS = {
         ],
         "deny": [],
     },
+    "hooks": {
+        "Notification": [
+            {
+                "matcher": "idle_prompt",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "command -v cmux &>/dev/null && cmux notify --title 'Claude Code' --body 'Waiting for input' || true",
+                    }
+                ],
+            }
+        ]
+    },
 }
 
 # Autonomous execution instructions for Claude Code
@@ -82,6 +95,9 @@ CODEX_INSTRUCTIONS = """\
 - Do not ask clarifying questions — resolve ambiguity yourself
 - Run tests after changes when possible
 """
+
+# Codex notify TOML line for cmux integration
+_CODEX_NOTIFY_TOML = r'''notify = ["bash", "-c", "command -v cmux &>/dev/null && cmux notify --title Codex --body \"$(echo $1 | jq -r '.\"last-assistant-message\" // \"Turn complete\"' 2>/dev/null | head -c 100)\" || true", "--"]'''
 
 
 class ProjectBootstrapper:
@@ -144,12 +160,21 @@ class ProjectBootstrapper:
                 existing_allows = set(existing.get("permissions", {}).get("allow", []))
                 required_allows = set(CLAUDE_SETTINGS["permissions"]["allow"])
                 missing = required_allows - existing_allows
+
+                # Ensure hooks.Notification section exists
+                hooks_missing = False
+                if "hooks" not in existing or "Notification" not in existing.get("hooks", {}):
+                    existing.setdefault("hooks", {})["Notification"] = CLAUDE_SETTINGS["hooks"]["Notification"]
+                    hooks_missing = True
+
                 if missing:
                     merged_allows = sorted(existing_allows | required_allows)
                     existing.setdefault("permissions", {})["allow"] = merged_allows
+
+                if missing or hooks_missing:
                     settings_file.write_text(json.dumps(existing, indent=2) + "\n")
                     result["updated"].append(".claude/settings.json")
-                    logger.info("Updated .claude/settings.json: added %s", missing)
+                    logger.info("Updated .claude/settings.json: added permissions=%s hooks=%s", missing, hooks_missing)
                 else:
                     result["skipped"].append(".claude/settings.json")
             except (json.JSONDecodeError, OSError):
@@ -231,3 +256,16 @@ class ProjectBootstrapper:
             f.write(trust_block)
         result["created"].append(f"codex-trust:{project_str}")
         logger.info("Added Codex trust for %s", project_str)
+
+        # Ensure cmux notify hook is configured
+        self._ensure_codex_notify(codex_config, content, result)
+
+    def _ensure_codex_notify(self, codex_config: Path, content: str, result: dict) -> None:
+        """Ensure notify command is set in Codex global config for cmux integration."""
+        if "notify" in content:
+            return
+
+        with open(codex_config, "a") as f:
+            f.write("\n" + _CODEX_NOTIFY_TOML + "\n")
+        result.setdefault("updated", []).append("codex-notify")
+        logger.info("Added cmux notify hook to Codex config")

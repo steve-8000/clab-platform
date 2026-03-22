@@ -143,6 +143,10 @@ async def executor_node(state: dict) -> dict:
     plan = state.get("plan", [])
     idx = state.get("current_task_index", 0)
 
+    # Guard: stop if max iterations exceeded
+    if state.get("iteration_count", 0) >= state.get("max_iterations", 20):
+        return {"current_output": "Max iterations reached", "current_exit_code": 1}
+
     if idx >= len(plan):
         return {"current_output": "", "current_exit_code": -1}
 

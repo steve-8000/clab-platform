@@ -70,12 +70,18 @@ def select_task_node(state: dict) -> dict:
     """Select the next pending task from the plan."""
     plan = state.get("plan", [])
     idx = state.get("current_task_index", 0)
+    iteration_count = state.get("iteration_count", 0) + 1
+    max_iterations = state.get("max_iterations", 20)
+
+    # Guard: force termination if max iterations reached
+    if iteration_count >= max_iterations:
+        return {"current_task_index": len(plan), "iteration_count": iteration_count}
 
     # Find next pending task starting from current index
     while idx < len(plan) and plan[idx].get("status") not in ("pending",):
         idx += 1
 
-    return {"current_task_index": idx}
+    return {"current_task_index": idx, "iteration_count": iteration_count}
 
 
 def mark_complete_node(state: dict) -> dict:
@@ -172,11 +178,17 @@ def select_batch_node(state: dict) -> dict:
     """Select the next batch of pending tasks (up to 3)."""
     plan = state.get("plan", [])
     idx = state.get("current_task_index", 0)
+    iteration_count = state.get("iteration_count", 0) + 1
+    max_iterations = state.get("max_iterations", 20)
+
+    # Guard: force termination if max iterations reached
+    if iteration_count >= max_iterations:
+        return {"current_task_index": len(plan), "iteration_count": iteration_count}
 
     while idx < len(plan) and plan[idx].get("status") not in ("pending",):
         idx += 1
 
-    return {"current_task_index": idx}
+    return {"current_task_index": idx, "iteration_count": iteration_count}
 
 
 def mark_batch_complete_node(state: dict) -> dict:

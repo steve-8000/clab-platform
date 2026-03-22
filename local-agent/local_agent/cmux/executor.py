@@ -240,6 +240,7 @@ class CmuxRuntime:
         surface_id = self._engine_surfaces.get(engine)
         if not surface_id:
             raise KeyError(f"No surface found for engine: {engine}")
+        self.monitor.reset_prompt_tracking(surface_id)
         await self.cmux.send_text(surface_id, instruction)
         await asyncio.sleep(1.0)
         await self.cmux.send_key(surface_id, "enter")
