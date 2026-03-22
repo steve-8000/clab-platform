@@ -472,7 +472,7 @@ async def search_symbols(
                     "snapshot_id": "",
                     "fq_name": s.name,
                     "name": s.name,
-                    "kind": s.kind,
+                    "kind": s.kind.lower() if s.kind else "variable",
                     "file_path": s.file_path,
                     "line_number": s.line_number,
                     "language": s.language,
