@@ -167,7 +167,8 @@ export const app = new Hono()
     checks.eventBus = bus["nc"] ? "ok" : "disconnected";
     if (!bus["nc"]) healthy = false;
 
-    return c.json({ status: healthy ? "ok" : "degraded", ...checks }, healthy ? 200 : 503);
+    const dbOk = checks.db === "ok";
+    return c.json({ status: healthy ? "ok" : "degraded", ...checks }, dbOk ? 200 : 503);
   })
 
   // POST /review — Review a completed task and cascade completion

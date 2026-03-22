@@ -27,5 +27,6 @@ export const app = new Hono()
     if (!eventBusConnected) healthy = false;
 
     const status = healthy ? "ok" : "degraded";
-    return c.json({ status, service: "orchestrator", checks }, healthy ? 200 : 503);
+    const dbOk = checks.database === "ok";
+    return c.json({ status, service: "orchestrator", checks }, dbOk ? 200 : 503);
   });
