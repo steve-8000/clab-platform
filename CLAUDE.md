@@ -22,7 +22,7 @@ Agent Workspace (created at plan stage):
   ├─ codex-worker-0 ── parallel execution
   ├─ codex-worker-1 ── parallel execution
   ├─ codex-worker-2 ── parallel execution
-  └─ claude-reviewer ── review + fix loop
+  └─ codex-reviewer ── review + fix loop
 ```
 
 - Orchestrator WS: browser only. Never add agent surfaces.
@@ -30,7 +30,7 @@ Agent Workspace (created at plan stage):
 - **cmux notify = trigger** ("looks done") — NOT source of truth
 - **clab review = truth** ("actually succeeded, failed, or waiting")
 - Agents run with full permissions: `--dangerously-skip-permissions`, `--full-auto`
-- Reasoning (planner/verifier/replanner): subprocess via `claude --print`, no workspace created
+- Planner/verifier/replanner: orchestrator's cmux claude surface (reuse_current), subprocess fallback
 - mission_run: parallel by default (MCP `parallel=true`), CLI opt-in (`--parallel`)
 
 ## Available MCP Tools
