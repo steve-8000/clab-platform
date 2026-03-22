@@ -265,7 +265,7 @@ def update_session(session_id: str, req: UpdateSessionRequest):
         raise HTTPException(404, "Session run not found")
     _append_and_publish_event(session_id, run["id"], "session.updated", updates)
     thread = _as_jsonable(store.get_thread(session_id))
-    return _format_session(thread or {}, run)
+    return _format_session(thread, run) if thread else {"error": "thread not found"}
 
 
 @app.get("/sessions")
@@ -331,7 +331,7 @@ async def create_interrupt(req: CreateInterruptRequest):
     run_id = req.run_id
     if not run_id:
         latest = _as_jsonable(store.get_latest_run_for_thread(thread_id))
-        run_id = latest["id"] if latest else None
+        run_id = latest.get("id") if latest else None
     intr = _as_jsonable(store.create_interrupt(thread_id, run_id, req.value))
     if not intr:
         raise HTTPException(500, "Failed to create interrupt")

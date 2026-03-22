@@ -4,6 +4,8 @@ import json
 import re
 import logging
 
+from graph.state import AgentState
+
 logger = logging.getLogger(__name__)
 
 REPLANNER_PROMPT = """You are a development replanner. A task has failed.
@@ -17,7 +19,7 @@ Respond with ONLY JSON (no other text):
 {"action": "retry|skip|abort", "reason": "...", "modified_description": "..." (for retry only)}
 """
 
-async def replanner_node(state: dict) -> dict:
+async def replanner_node(state: AgentState) -> dict:
     """Re-evaluate and adjust plan after a task failure."""
     from local_agent.config import invoke_cli
 

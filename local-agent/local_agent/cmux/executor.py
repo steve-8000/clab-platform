@@ -20,8 +20,7 @@ import asyncio
 import logging
 import os
 import uuid
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from .client import CmuxClient
 from .monitor import CompletionMonitor
@@ -489,11 +488,13 @@ class CmuxRuntime:
         if not self.workspace_id:
             raise RuntimeError("No agent created — call create_agent() first")
 
+        from local_agent.config import _planner_engine_started
         pool = WorkerPool(
             self.cmux,
             self.workspace_id,
             num_workers,
             registry=self.surfaces,
+            reviewer_engine_started=_planner_engine_started,
         )
         await pool.initialize(workdir, system_prompt)
         self._worker_pool = pool

@@ -4,6 +4,8 @@ import json
 import re
 import logging
 
+from graph.state import AgentState
+
 logger = logging.getLogger(__name__)
 
 PLANNER_SYSTEM_PROMPT = """You are a development planner. Given a goal and context, decompose it into concrete executable tasks.
@@ -26,7 +28,7 @@ Rules:
 - Include test/verification tasks when appropriate
 """
 
-async def planner_node(state: dict) -> dict:
+async def planner_node(state: AgentState) -> dict:
     """Decompose goal into task list using Claude CLI."""
     from local_agent.config import invoke_cli
 

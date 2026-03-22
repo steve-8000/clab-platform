@@ -385,7 +385,8 @@ class CompletionMonitor:
         for known permission prompt patterns and sends the appropriate response.
         """
         tail, _p = output[-800:], self._responded_prompts.get(surface_id)
-        if _p and (len(output) == _p[0] or time.monotonic() - _p[1] < 5.0): return
+        if _p and (len(output) == _p[0] or time.monotonic() - _p[1] < 5.0):
+            return
         for pattern, response in PERMISSION_PROMPTS:
             if pattern.search(tail):
                 logger.info("Auto-responding to permission prompt on surface %s", surface_id)

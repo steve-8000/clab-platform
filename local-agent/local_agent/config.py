@@ -1,7 +1,7 @@
 """Agent configuration and LLM model factory."""
 from __future__ import annotations
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 @dataclass
 class AgentConfig:
@@ -66,24 +66,24 @@ async def invoke_cli(system_prompt: str, user_prompt: str, timeout: float = 120)
 
 
 async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeout: float) -> str:
-    """Use orchestrator's cmux workspace for reasoning. Never creates a new workspace."""
+    """Use agent workspace for reasoning via codex. Creates agent WS if needed."""
     global _planner_engine_started
 
     workdir = get_config().workdir
 
     if not runtime.workspace_id:
-        await runtime.create_agent("orchestrator", workdir=workdir, reuse_current=True)
+        await runtime.create_agent("agent-planner", workdir=workdir, reuse_current=False)
 
-    surface_id = await runtime.get_or_create_surface("claude")
+    surface_id = await runtime.get_or_create_surface("codex")
 
     if not _planner_engine_started:
-        await runtime.start_engine(surface_id, "claude", workdir)
+        await runtime.start_engine(surface_id, "codex", workdir)
         _planner_engine_started = True
 
     full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
-    await runtime.inject_command("claude", full_prompt)
+    await runtime.inject_command("codex", full_prompt)
 
-    result = await runtime.collect_output("claude", timeout=timeout)
+    result = await runtime.collect_output("codex", timeout=timeout)
     return result.output
 
 
@@ -101,16 +101,16 @@ async def cleanup_planner_runtime():
 
 
 async def _invoke_via_subprocess(system_prompt: str, user_prompt: str, timeout: float) -> str:
-    """Fallback: use claude --print or codex subprocess."""
+    """Fallback: use codex subprocess (preferred) or claude."""
     import asyncio
     import shutil
 
     full_prompt = f"{system_prompt}\n\n---\n\n{user_prompt}"
 
-    # Try Claude CLI first (preferred)
-    if shutil.which("claude"):
+    # Try Codex CLI first (preferred)
+    if shutil.which("codex"):
         proc = await asyncio.create_subprocess_exec(
-            "claude", "--print", "-p", full_prompt,
+            "codex", "--quiet", "-p", full_prompt,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=get_config().workdir,
@@ -121,10 +121,10 @@ async def _invoke_via_subprocess(system_prompt: str, user_prompt: str, timeout: 
             output += f"\nSTDERR:\n{stderr.decode('utf-8', errors='replace')}"
         return output
 
-    # Fallback to Codex CLI
-    if shutil.which("codex"):
+    # Fallback to Claude CLI
+    if shutil.which("claude"):
         proc = await asyncio.create_subprocess_exec(
-            "codex", "--quiet", "-p", full_prompt,
+            "claude", "--print", "-p", full_prompt,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=get_config().workdir,
@@ -132,4 +132,4 @@ async def _invoke_via_subprocess(system_prompt: str, user_prompt: str, timeout: 
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return stdout.decode("utf-8", errors="replace")
 
-    raise RuntimeError("Neither 'claude' nor 'codex' CLI found in PATH")
+    raise RuntimeError("Neither 'codex' nor 'claude' CLI found in PATH")

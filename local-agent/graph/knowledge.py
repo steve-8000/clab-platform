@@ -1,12 +1,12 @@
 """Knowledge integration nodes calling the Go knowledge-service via HTTP."""
-from __future__ import annotations
 import httpx
-import json
 import logging
+
+from graph.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-async def pre_k_node(state: dict) -> dict:
+async def pre_k_node(state: AgentState) -> dict:
     """Retrieve prior knowledge from Knowledge Plane."""
     from local_agent.config import get_config
     config = get_config()
@@ -45,7 +45,7 @@ async def pre_k_node(state: dict) -> dict:
         return {"enriched_context": "", "pre_k_result": {}}
 
 
-async def post_k_node(state: dict) -> dict:
+async def post_k_node(state: AgentState) -> dict:
     """Verify knowledge integrity via Knowledge Plane."""
     from local_agent.config import get_config
     config = get_config()
@@ -71,7 +71,7 @@ async def post_k_node(state: dict) -> dict:
         return {"knowledge_debt_passed": True}
 
 
-async def insight_node(state: dict) -> dict:
+async def insight_node(state: AgentState) -> dict:
     """Extract and store insights from completed work."""
     from local_agent.config import get_config
     config = get_config()

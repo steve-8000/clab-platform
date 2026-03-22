@@ -18,7 +18,7 @@ def main():
     parser.add_argument("--interrupt", action="store_true", help="Interrupt before each execution")
     parser.add_argument("--interactive", action="store_true", help="Interactive mode")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
-    parser.add_argument("--parallel", action="store_true", help="Use parallel execution (3 codex workers + 1 claude reviewer)")
+    parser.add_argument("--parallel", action="store_true", help="Use parallel execution (3 codex workers + 1 codex reviewer)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -97,7 +97,7 @@ async def run_goal(goal: str, config, parallel: bool = False):
     if thread_id:
         print(f"📡 CP: thread={thread_id[:8]}... run={run_id[:8]}...")
     else:
-        print(f"📡 CP: offline mode")
+        print("📡 CP: offline mode")
     print("─" * 60)
 
     result = await graph.ainvoke(initial_state)
@@ -129,12 +129,6 @@ async def run_goal(goal: str, config, parallel: bool = False):
 
 async def interactive_loop(config):
     """Interactive mode — keep accepting goals."""
-    from local_agent.graph.builder import build_agent_graph
-
-    graph = build_agent_graph(
-        interrupt_before_execute=config.interrupt_before_execute,
-    )
-
     print("🤖 LangGraph Local Agent (interactive mode)")
     print("Type a development goal, or 'quit' to exit.\n")
 

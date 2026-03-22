@@ -5,6 +5,8 @@ import shutil
 import time
 import logging
 
+from graph.state import AgentState
+
 logger = logging.getLogger(__name__)
 
 # Lazy-loaded cmux runtime (shared across invocations within a graph run)
@@ -61,19 +63,22 @@ async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
     workdir = state.get("workdir", ".")
     enriched_context = state.get("enriched_context", "")
     task_id = task["id"]
-    engine = task.get("engine", "claude")
+    engine = task.get("engine", "codex")
 
     # Create agent workspace + bootstrap project config if not yet done
     if not state.get("cmux_workspace_id"):
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         await ProjectBootstrapper().provision(workdir)
-        # Inherit orchestrator WS ID from planner runtime (for browser allocation)
         from local_agent.config import _planner_runtime
         if _planner_runtime and _planner_runtime.workspace_id:
-            runtime._orchestrator_ws_id = _planner_runtime.workspace_id
-        goal = state.get("goal", "mission")
-        ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
-        state["cmux_workspace_id"] = ws_id
+            runtime.workspace_id = _planner_runtime.workspace_id
+            runtime.workspace_name = _planner_runtime.workspace_name
+            runtime._current_workdir = workdir
+            state["cmux_workspace_id"] = _planner_runtime.workspace_id
+        else:
+            goal = state.get("goal", "mission")
+            ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
+            state["cmux_workspace_id"] = ws_id
 
     # Get or create surface for this engine (reused across tasks)
     engine_initialized = state.get("_engine_initialized", set())
@@ -117,17 +122,17 @@ async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
 
 async def _execute_via_subprocess(state: dict, task: dict) -> dict:
     """Fallback: execute via CLI subprocess (original behavior)."""
-    engine = task.get("engine", "claude")
+    engine = task.get("engine", "codex")
     prompt = task["description"]
     workdir = state.get("workdir", ".")
 
     if state.get("enriched_context"):
         prompt = f"{state['enriched_context']}\n\n---\n\n{prompt}"
 
-    if engine == "claude":
-        cmd = ["claude", "--print", "-p", prompt]
-    elif engine == "codex":
+    if engine == "codex":
         cmd = ["codex", "--quiet", "-p", prompt]
+    elif engine == "claude":
+        cmd = ["claude", "--print", "-p", prompt]
     else:
         return {"current_output": f"Unknown engine: {engine}", "current_exit_code": 1}
 
@@ -164,7 +169,7 @@ async def _execute_via_subprocess(state: dict, task: dict) -> dict:
         return {"current_output": f"{engine} CLI not found", "current_exit_code": 127}
 
 
-async def executor_node(state: dict) -> dict:
+async def executor_node(state: AgentState) -> dict:
     """Execute the current task — cmux runtime preferred, subprocess fallback."""
     plan = state.get("plan", [])
     idx = state.get("current_task_index", 0)
@@ -227,7 +232,7 @@ async def _get_or_create_worker_pool(runtime, state: dict):
     return pool
 
 
-async def parallel_executor_node(state: dict) -> dict:
+async def parallel_executor_node(state: AgentState) -> dict:
     """Execute up to N pending tasks in parallel via WorkerPool.
 
     Falls back to sequential executor_node when cmux/WorkerPool unavailable.
@@ -257,13 +262,16 @@ async def parallel_executor_node(state: dict) -> dict:
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         workdir = state.get("workdir", ".")
         await ProjectBootstrapper().provision(workdir)
-        # Inherit orchestrator WS ID from planner runtime (for browser allocation)
         from local_agent.config import _planner_runtime
         if _planner_runtime and _planner_runtime.workspace_id:
-            runtime._orchestrator_ws_id = _planner_runtime.workspace_id
-        goal = state.get("goal", "mission")
-        ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
-        state["cmux_workspace_id"] = ws_id
+            runtime.workspace_id = _planner_runtime.workspace_id
+            runtime.workspace_name = _planner_runtime.workspace_name
+            runtime._current_workdir = workdir
+            state["cmux_workspace_id"] = _planner_runtime.workspace_id
+        else:
+            goal = state.get("goal", "mission")
+            ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
+            state["cmux_workspace_id"] = ws_id
 
     # Report batch start to Control Plane
     reporter = state.get("_cp_reporter")

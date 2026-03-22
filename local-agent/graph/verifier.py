@@ -9,6 +9,8 @@ import asyncio
 import os
 import logging
 
+from graph.state import AgentState
+
 logger = logging.getLogger(__name__)
 
 # Prefer venv python for verification tools
@@ -25,7 +27,7 @@ def _get_python() -> str:
     return "python3"
 
 
-async def verifier_node(state: dict) -> dict:
+async def verifier_node(state: AgentState) -> dict:
     """Verify the current task result by running lint, type-check, and tests.
 
     Always uses subprocess — never runs inside cmux surfaces.

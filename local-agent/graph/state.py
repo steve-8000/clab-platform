@@ -1,6 +1,6 @@
 """Agent state definition for the Plan-Execute-Verify-Replan loop."""
 from __future__ import annotations
-from typing import Annotated, Sequence, Any
+from typing import Annotated, Sequence
 from operator import add
 from langchain_core.messages import BaseMessage
 from typing_extensions import TypedDict

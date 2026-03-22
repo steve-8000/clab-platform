@@ -21,12 +21,15 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .client import CmuxClient
 from .monitor import CompletionMonitor
 # TaskResult and AUTONOMOUS_DIRECTIVE are imported lazily to avoid circular imports
 # (executor.py imports WorkerPool from this module)
+
+if TYPE_CHECKING:
+    from .executor import TaskResult
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +184,7 @@ class Worker:
 
 @dataclass
 class ReviewResult:
-    """Result from the Claude reviewer."""
+    """Result from the Codex reviewer."""
 
     approved: bool
     feedback: str  # empty if approved, fix instructions if not
@@ -189,9 +192,9 @@ class ReviewResult:
 
 
 class ReviewLoop:
-    """Manages the Claude reviewer and the review-fix-re-review cycle.
+    """Manages the Codex reviewer and the review-fix-re-review cycle.
 
-    Uses asyncio.Lock because the single Claude surface can only
+    Uses asyncio.Lock because the single Codex reviewer surface can only
     process one review at a time.
     """
 
@@ -296,14 +299,14 @@ class WorkerPool:
         cmux: CmuxClient,
         workspace_id: str,
         num_workers: int = 3,
-        existing_claude_surface_id: str | None = None,
         registry: Any | None = None,
+        reviewer_engine_started: bool = False,
     ) -> None:
         self.cmux = cmux
         self.workspace_id = workspace_id
         self.num_workers = num_workers
-        self._existing_claude_surface_id = existing_claude_surface_id
         self._registry = registry  # SurfaceRegistry from CmuxRuntime
+        self._reviewer_engine_started = reviewer_engine_started
         self.workers: list[Worker] = []
         self.reviewer: Worker | None = None
         self.review_loop: ReviewLoop | None = None
@@ -387,7 +390,10 @@ class WorkerPool:
 
         # Start all engines in parallel
         start_tasks = [w.start_engine(workdir) for w in self.workers]
-        start_tasks.append(self.reviewer.start_engine(workdir))
+        if not self._reviewer_engine_started:
+            start_tasks.append(self.reviewer.start_engine(workdir))
+        else:
+            self.reviewer._engine_started = True
         await asyncio.gather(*start_tasks)
 
         self._initialized = True
