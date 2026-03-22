@@ -8,23 +8,25 @@ Three-layer multi-agent orchestration platform:
 - **Knowledge Plane** (K8s/Go): Pre-K/Post-K, knowledge storage, insight extraction
 - **cmux Runtime Plane** (Local): Agent execution via cmux workspaces/surfaces/browser
 
-### cmux Runtime Model
+### cmux Workspace Model
+
+Two-workspace architecture: orchestrator stays clean, agents work separately.
 
 ```
-Agent = cmux workspace (e.g., agent-auth, agent-reviewer)
-  ├─ Surface A: Claude CLI (design, review, reasoning)
-  ├─ Surface B: Codex CLI (implementation, code generation)
-  └─ Surface C: Browser (web interaction, local app verification)
+Orchestrator Workspace (user-facing):
+  ├─ Surface: Claude CLI (orchestrator)
+  └─ Surface: Browser (optional, for verification)
+  ※ No codex/claude agent surfaces here
 
-Parallel Mode (WorkerPool):
+Agent Workspace (created at plan stage):
   ├─ codex-worker-0 ── parallel execution
   ├─ codex-worker-1 ── parallel execution
   ├─ codex-worker-2 ── parallel execution
   └─ claude-reviewer ── review + fix loop
-
-Browser = separate workspace (isolated verification)
 ```
 
+- Orchestrator WS: browser only. Never add agent surfaces.
+- Agent WS: all codex/claude work happens here. User switches tabs to monitor.
 - **cmux notify = trigger** ("looks done") — NOT source of truth
 - **clab review = truth** ("actually succeeded, failed, or waiting")
 - Agents run with full permissions: `--dangerously-skip-permissions`, `--full-auto`
