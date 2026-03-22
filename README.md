@@ -87,7 +87,7 @@ C. cmux Runtime Plane (Local)
 ```
 User Goal → Local Agent
   1. Pre-K: retrieve prior knowledge (→ Knowledge Plane)
-  2. Planner (codex-0): decompose goal into task graph
+  2. Planner (codex-0 on main surface): decompose goal into task graph
   3. Execute tasks:
      ├── Parallel mode (default): WorkerPool
      │   ├── codex-1/2/3 execute tasks concurrently
@@ -122,6 +122,7 @@ Agent Workspace "agent-planner" (created at plan stage):
 
 - Orchestrator WS: coordination only, no codex surfaces
 - Agent WS: all codex work happens here, single workspace with 4 surfaces
+- Workspace named `{orchestrator}:agent` (e.g. `K8s-STG:agent`), persists across missions
 - Planner creates agent WS → executor reuses it via `_planner_runtime.workspace_id`
 - `cmux notify` = trigger (looks done), `clab review` = truth (actually verified)
 
@@ -145,6 +146,14 @@ done
 - Preamble: `"Do not produce a task list or plan. Execute now."`
 - Max ≤4 edits per prompt (more triggers planning mode)
 - End with: `"Modify files directly. Do not summarize or plan."`
+
+## Workspace Lifecycle
+
+- Agent workspace created on first mission, reused across subsequent missions
+- Codex sessions retain file history and context between missions
+- No startup overhead on repeat runs (codex already running on surfaces)
+- Workspace auto-detected via `CMUX_WORKSPACE_ID` environment variable
+- Named `{orchestrator}:agent` — deterministic lookup, no collision between sessions
 
 ## MCP Tools
 
