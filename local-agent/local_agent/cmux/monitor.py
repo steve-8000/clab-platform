@@ -203,38 +203,25 @@ class CompletionMonitor:
     # ------------------------------------------------------------------
 
     async def _check_notifications(self, surface_id: str) -> bool:
-        """Check if any notification exists for this surface, indicating completion.
-
-        Matches notifications where:
-        - ``surface_id`` field matches exactly, OR
-        - the notification title/body contains the surface_id string.
-        """
+        """Check if any notification exists for this surface."""
         try:
-            notifications = await self.cmux.notification_list()
+            matched = await self.cmux.notification_list_for_surface(surface_id)
+            if matched:
+                logger.debug("Notification matched surface_id=%s: %s", surface_id, matched[0])
+                return True
         except Exception:
             logger.debug("Failed to poll notifications", exc_info=True)
             return False
-
-        if not notifications:
-            return False
-
-        for notif in notifications:
-            # Direct surface_id match
-            if notif.get("surface_id") == surface_id:
-                logger.debug(
-                    "Notification matched surface_id=%s: %s", surface_id, notif,
-                )
-                return True
-            # Fallback: check if surface_id appears in title or body
-            title = notif.get("title", "")
-            body = notif.get("body", "")
-            if surface_id in title or surface_id in body:
-                logger.debug(
-                    "Notification matched surface_id=%s in title/body: %s",
-                    surface_id, notif,
-                )
-                return True
-
+        try:
+            all_notifs = await self.cmux.notification_list()
+            for notif in all_notifs:
+                title = notif.get("title", "")
+                body = notif.get("body", "")
+                if surface_id in title or surface_id in body:
+                    logger.debug("Notification matched surface_id=%s in title/body: %s", surface_id, notif)
+                    return True
+        except Exception:
+            pass
         return False
 
     # ------------------------------------------------------------------

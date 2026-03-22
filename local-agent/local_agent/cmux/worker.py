@@ -159,7 +159,12 @@ class Worker:
         with open(prompt_path, "w") as f:
             f.write(instruction)
         logger.info("Prompt file written: %s (%d chars)", prompt_path, len(instruction))
-        return f"Read the file {prompt_path} and execute ALL instructions inside it exactly. Do not summarize — execute them."
+        return (
+            f"Do not produce a task list or plan. "
+            f"Execute the instructions in {prompt_path} now. "
+            f"Make code changes directly. Fix any errors. "
+            f"Do not stop after analysis or planning."
+        )
 
     async def inject_and_collect(
         self,

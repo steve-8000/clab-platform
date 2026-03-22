@@ -223,6 +223,11 @@ class CmuxClient:
     async def notification_clear(self) -> None:
         await self.request("notification.clear")
 
+    async def notification_list_for_surface(self, surface_id: str) -> list[dict]:
+        """Return only notifications matching the given surface_id."""
+        all_notifs = await self.notification_list()
+        return [n for n in all_notifs if n.get("surface_id") == surface_id]
+
     # ---- System ----
     async def identify(self) -> dict:
         return await self.request("system.identify")
