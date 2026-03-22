@@ -11,7 +11,7 @@ data:
   PORT: "8000"
   LOG_LEVEL: "info"
   OTEL_SERVICE_NAME: "control-plane"
-  DATABASE_URL: "postgresql://clab:clab@postgresql.clab.svc.cluster.local:5432/clab"
+  DATABASE_URL: "postgresql://clab:clab-stg-pass@postgres.clab-platform.svc.cluster.local:5432/clab"
 
 ---
 apiVersion: apps/v1
