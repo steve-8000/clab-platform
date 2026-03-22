@@ -27,6 +27,7 @@ Agent Workspace "agent-planner" (planner creates at plan stage):
 
 - Orchestrator WS: browser only. Never add agent surfaces.
 - Agent WS: all codex work happens here. User switches tabs to monitor.
+- Workspace persists across missions — codex sessions retain context, no restart overhead
 - **cmux notify = trigger** ("looks done") — NOT source of truth
 - **clab review = truth** ("actually succeeded, failed, or waiting")
 - Agents run with full permissions: `--dangerously-skip-permissions`, `--full-auto`
