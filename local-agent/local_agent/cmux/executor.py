@@ -632,4 +632,12 @@ class CmuxRuntime:
             self._utility_terminal_id = None
             self._utility_workspace_id = None
 
+        if self.workspace_id:
+            try:
+                await self.cmux.workspace_close(self.workspace_id)
+                logger.info("Workspace closed: %s", self.workspace_id)
+            except Exception as exc:
+                logger.debug("Failed to close workspace %s: %s", self.workspace_id, exc)
+            self.workspace_id = None
+
         logger.info("Runtime shutdown: workspace=%s", self.workspace_id)

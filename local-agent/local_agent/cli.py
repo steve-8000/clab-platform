@@ -17,6 +17,9 @@ def main():
     parser.add_argument("--max-retries", type=int, default=3, help="Max retries per task")
     parser.add_argument("--interrupt", action="store_true", help="Interrupt before each execution")
     parser.add_argument("--interactive", action="store_true", help="Interactive mode")
+    parser.add_argument("--daemon", action="store_true", help="Run as persistent daemon")
+    parser.add_argument("--inspect-cmux", action="store_true", help="Print cmux workspace snapshot")
+    parser.add_argument("--worker-id", type=str, default=None, help="Worker ID for daemon mode")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
     parser.add_argument("--parallel", action="store_true", help="Use parallel execution (3 codex workers + 1 codex reviewer)")
     args = parser.parse_args()
@@ -38,7 +41,32 @@ def main():
     )
     configure(config)
 
-    if args.interactive:
+    if args.daemon:
+        from local_agent.daemon import run_daemon
+
+        asyncio.run(
+            run_daemon(
+                control_plane_url=config.control_plane_url,
+                worker_id=args.worker_id,
+                workdir=args.workdir,
+            )
+        )
+    elif args.inspect_cmux:
+        from local_agent.cmux.client import CmuxClient
+        from local_agent.cmux.introspect import build_workspace_snapshot
+        import json as _json
+
+        async def _inspect():
+            cmux = CmuxClient()
+            await cmux.connect()
+            try:
+                snapshot = await build_workspace_snapshot(cmux)
+                print(_json.dumps(snapshot, indent=2, ensure_ascii=False))
+            finally:
+                await cmux.disconnect()
+
+        asyncio.run(_inspect())
+    elif args.interactive:
         asyncio.run(interactive_loop(config))
     elif args.goal:
         asyncio.run(run_goal(args.goal, config, parallel=args.parallel))
@@ -100,11 +128,11 @@ async def run_goal(goal: str, config, parallel: bool = False):
         print("📡 CP: offline mode")
     print("─" * 60)
 
-    result = await graph.ainvoke(initial_state)
-
-    # Cleanup cmux runtime (prevent orphan workspaces on next run)
-    from graph.executor import cleanup_cmux_runtime
-    await cleanup_cmux_runtime()
+    from local_agent.graph.executor import cleanup_cmux_runtime
+    try:
+        result = await graph.ainvoke(initial_state)
+    finally:
+        await cleanup_cmux_runtime()
 
     # Report completion to CP
     completed = result.get("completed_tasks", [])

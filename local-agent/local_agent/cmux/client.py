@@ -136,6 +136,9 @@ class CmuxClient:
             params["workspace_id"] = workspace_id
         await self.request("workspace.rename", params)
 
+    async def workspace_close(self, workspace_id: str) -> None:
+        await self.request("workspace.close", {"workspace_id": workspace_id})
+
     # ---- Surface ----
     async def surface_create(self, workspace_id: str | None = None) -> dict:
         params = {}
