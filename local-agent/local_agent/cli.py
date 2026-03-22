@@ -99,6 +99,10 @@ async def run_goal(goal: str, config):
 
     result = await graph.ainvoke(initial_state)
 
+    # Cleanup cmux runtime (prevent orphan workspaces on next run)
+    from graph.executor import cleanup_cmux_runtime
+    await cleanup_cmux_runtime()
+
     # Report completion to CP
     completed = result.get("completed_tasks", [])
     failed = result.get("failed_tasks", [])

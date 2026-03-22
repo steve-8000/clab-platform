@@ -16,5 +16,18 @@
       "mcp__*"
     ],
     "deny": []
+  },
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "idle_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v cmux &>/dev/null && cmux notify --title 'Claude Code' --body 'Waiting for input' || true"
+          }
+        ]
+      }
+    ]
   }
 }

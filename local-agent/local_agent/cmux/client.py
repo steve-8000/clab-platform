@@ -32,40 +32,46 @@ class CmuxClient:
         self._next_id = 1
         self._pending: dict[int, asyncio.Future[dict]] = {}
         self._recv_task: asyncio.Task | None = None
-        self._buffer = ""
+        self._raw_buffer = b""
+        self._request_lock = asyncio.Lock()
+        self._conn_lock = asyncio.Lock()
 
     async def connect(self, socket_path: str | None = None) -> None:
-        path = socket_path or os.environ.get("CMUX_SOCKET_PATH", DEFAULT_SOCKET_PATH)
-        self._reader, self._writer = await asyncio.open_unix_connection(path)
-        self._recv_task = asyncio.create_task(self._receive_loop())
-        logger.info("Connected to cmux at %s", path)
+        async with self._conn_lock:
+            path = socket_path or os.environ.get("CMUX_SOCKET_PATH", DEFAULT_SOCKET_PATH)
+            self._reader, self._writer = await asyncio.open_unix_connection(path)
+            self._recv_task = asyncio.create_task(self._receive_loop())
+            logger.info("Connected to cmux at %s", path)
 
     async def disconnect(self) -> None:
-        if self._recv_task:
-            self._recv_task.cancel()
-            self._recv_task = None
-        if self._writer:
-            self._writer.close()
-            await self._writer.wait_closed()
-            self._writer = None
-        self._reader = None
-        for fut in self._pending.values():
-            if not fut.done():
-                fut.cancel()
-        self._pending.clear()
+        async with self._conn_lock:
+            if self._recv_task:
+                self._recv_task.cancel()
+                self._recv_task = None
+            if self._writer:
+                self._writer.close()
+                await self._writer.wait_closed()
+                self._writer = None
+            self._reader = None
+            for fut in self._pending.values():
+                if not fut.done():
+                    fut.cancel()
+            self._pending.clear()
 
     async def request(self, method: str, params: dict[str, Any] | None = None) -> dict:
         if not self._writer:
             raise RuntimeError("Not connected to cmux — call connect() first")
-        req_id = self._next_id
-        self._next_id += 1
-        payload = {"id": req_id, "method": method, "params": params or {}}
-        line = json.dumps(payload, separators=(",", ":")) + "\n"
-        self._writer.write(line.encode())
-        await self._writer.drain()
 
-        future: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
-        self._pending[req_id] = future
+        async with self._request_lock:
+            req_id = self._next_id
+            self._next_id += 1
+            payload = {"id": req_id, "method": method, "params": params or {}}
+            line = json.dumps(payload, separators=(",", ":")) + "\n"
+            self._writer.write(line.encode())
+            await self._writer.drain()
+            future: asyncio.Future[dict] = asyncio.get_event_loop().create_future()
+            self._pending[req_id] = future
+
         try:
             return await asyncio.wait_for(future, timeout=REQUEST_TIMEOUT)
         except asyncio.TimeoutError:
@@ -78,9 +84,10 @@ class CmuxClient:
                 data = await self._reader.read(65536)
                 if not data:
                     break
-                self._buffer += data.decode()
-                while "\n" in self._buffer:
-                    line, self._buffer = self._buffer.split("\n", 1)
+                self._raw_buffer += data
+                while b"\n" in self._raw_buffer:
+                    raw_line, self._raw_buffer = self._raw_buffer.split(b"\n", 1)
+                    line = raw_line.decode("utf-8", errors="replace")
                     line = line.strip()
                     if not line:
                         continue

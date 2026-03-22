@@ -33,6 +33,26 @@ async def _get_cmux_runtime():
         return None
 
 
+async def cleanup_cmux_runtime():
+    """Shutdown cmux runtime and reset global state. Call after each mission."""
+    global _cmux_runtime, _cmux_worker_pool
+    if _cmux_runtime:
+        try:
+            await _cmux_runtime.shutdown()
+            await _cmux_runtime.cmux.disconnect()
+        except Exception as exc:
+            logger.debug("cmux cleanup error: %s", exc)
+        _cmux_runtime = None
+    _cmux_worker_pool = None
+
+    # Reset config-level engine flag
+    try:
+        import local_agent.config as cfg
+        cfg._claude_engine_started = False
+    except Exception:
+        pass
+
+
 async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
     """Execute task using CmuxRuntime. Returns raw output for clab to judge."""
     workdir = state.get("workdir", ".")

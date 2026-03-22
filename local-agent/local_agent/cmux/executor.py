@@ -173,6 +173,7 @@ class CmuxRuntime:
         # Engine-level surfaces — ONE surface per engine, reused across tasks
         self.surfaces = SurfaceRegistry()
         self._engine_surfaces: dict[str, str] = {}  # engine → surface_id
+        self._engine_lock = asyncio.Lock()  # protects _engine_surfaces + surface creation
         self._browser: CmuxBrowser | None = None
         self._right_surface_id: str | None = None
         self._worker_pool: WorkerPool | None = None
@@ -236,26 +237,27 @@ class CmuxRuntime:
         if engine == "browser":
             return await self._allocate_browser()
 
-        # Return existing surface if already created for this engine
-        if engine in self._engine_surfaces:
-            surface_id = self._engine_surfaces[engine]
-            logger.debug("Reusing %s surface: %s", engine, surface_id)
-            return surface_id
+        async with self._engine_lock:
+            # Return existing surface if already created for this engine
+            if engine in self._engine_surfaces:
+                surface_id = self._engine_surfaces[engine]
+                logger.debug("Reusing %s surface: %s", engine, surface_id)
+                return surface_id
 
-        # Create new surface — first one splits RIGHT, second splits DOWN
-        if self._right_surface_id:
-            surface = await self.cmux.surface_split("down", self.workspace_id, self._right_surface_id)
-        else:
-            surface = await self.cmux.surface_split("right", self.workspace_id)
+            # Create new surface — first one splits RIGHT, second splits DOWN
+            if self._right_surface_id:
+                surface = await self.cmux.surface_split("down", self.workspace_id, self._right_surface_id)
+            else:
+                surface = await self.cmux.surface_split("right", self.workspace_id)
 
-        surface_id = surface.get("surface_id", surface.get("id"))
-        if not self._right_surface_id:
-            self._right_surface_id = surface_id
+            surface_id = surface.get("surface_id", surface.get("id"))
+            if not self._right_surface_id:
+                self._right_surface_id = surface_id
 
-        self._engine_surfaces[engine] = surface_id
-        self.surfaces.register(engine, surface_id, engine)
+            self._engine_surfaces[engine] = surface_id
+            self.surfaces.register(engine, surface_id, engine)
 
-        # Rename surface tab to show engine name
+        # Rename surface tab to show engine name (outside lock — non-critical)
         try:
             await self.cmux.request("surface.rename", {
                 "surface_id": surface_id,
@@ -460,7 +462,11 @@ class CmuxRuntime:
         workdir: str = "",
         system_prompt: str = "",
     ) -> WorkerPool:
-        """Create a pool of N codex workers + 1 claude reviewer."""
+        """Create a pool of N codex workers + 1 claude reviewer. Idempotent."""
+        if self._worker_pool is not None:
+            logger.info("Reusing existing worker pool")
+            return self._worker_pool
+
         if not self.workspace_id:
             raise RuntimeError("No agent created — call create_agent() first")
 
@@ -557,7 +563,7 @@ class CmuxRuntime:
             self._right_surface_id = None
 
     async def shutdown(self) -> None:
-        """Release all surfaces, worker pool, and browser. Workspace remains for inspection."""
+        """Release all surfaces, worker pool, browser, and utility workspace."""
         if self._worker_pool:
             await self._worker_pool.shutdown()
             self._worker_pool = None
@@ -568,5 +574,14 @@ class CmuxRuntime:
 
         for engine in list(self._engine_surfaces):
             await self.release_surface(engine)
+
+        # Close utility workspace surfaces
+        if self._utility_terminal_id:
+            try:
+                await self.cmux.surface_close(self._utility_terminal_id)
+            except Exception:
+                pass
+            self._utility_terminal_id = None
+            self._utility_workspace_id = None
 
         logger.info("Runtime shutdown: workspace=%s", self.workspace_id)
