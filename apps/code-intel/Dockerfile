@@ -2,6 +2,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Install git and system dependencies needed by CGC/tree-sitter
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install dependencies
 COPY apps/code-intel/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
@@ -18,8 +23,10 @@ RUN pip install --no-cache-dir "tree-sitter-language-pack==0.13.0"
 # Copy application code
 COPY apps/code-intel /app/code_intel
 
-ENV PYTHONPATH=/app
+RUN mkdir -p /app/repos
 
-EXPOSE ${CODE_INTEL_PORT:-8003}
+ENV PYTHONPATH=/app:/app/packages
 
-CMD ["sh", "-c", "uvicorn code_intel.app:app --host 0.0.0.0 --port ${CODE_INTEL_PORT:-8003}"]
+EXPOSE ${CODE_INTEL_PORT:-4010}
+
+CMD ["sh", "-c", "uvicorn code_intel.app:app --host 0.0.0.0 --port ${CODE_INTEL_PORT:-4010}"]

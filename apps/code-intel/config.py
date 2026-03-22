@@ -13,6 +13,6 @@ CGC_TIMEOUT_INDEX = int(os.getenv("CGC_TIMEOUT_INDEX", "300"))
 
 CGC_TIMEOUT_QUERY = int(os.getenv("CGC_TIMEOUT_QUERY", "60"))
 
-CODE_INTEL_PORT = int(os.getenv("CODE_INTEL_PORT", "8003"))
+CODE_INTEL_PORT = int(os.getenv("CODE_INTEL_PORT", "4010"))
 
 CLAB_CONTROL_URL = os.getenv("CLAB_CONTROL_URL", "http://localhost:8000")

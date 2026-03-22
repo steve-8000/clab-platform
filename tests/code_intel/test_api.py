@@ -123,6 +123,24 @@ def _repo_row(repo_id="repo-1"):
     }
 
 
+def test_row_to_dict_parses_jsonb_string_values():
+    row = {
+        "metadata": "{}",
+        "primary_targets": '[{"name":"svc.handler"}]',
+        "related_files": '["src/svc.py"]',
+        "metrics_delta": '{"fan_out":2}',
+    }
+
+    parsed = code_intel_app._row_to_dict(row)
+
+    assert parsed == {
+        "metadata": {},
+        "primary_targets": [{"name": "svc.handler"}],
+        "related_files": ["src/svc.py"],
+        "metrics_delta": {"fan_out": 2},
+    }
+
+
 @pytest.mark.asyncio
 async def test_repository_crud(client):
     pool = FakePool()
@@ -158,6 +176,29 @@ async def test_repository_crud(client):
         get_response = await client.get("/repositories/repo-1")
         assert get_response.status_code == 200
         assert get_response.json()["repository"]["url"] == "https://github.com/acme/repo"
+
+
+@pytest.mark.asyncio
+async def test_delete_repository_endpoint_removes_clone_and_db_row(client):
+    pool = FakePool()
+    repo_row = _repo_row()
+    get_query = "SELECT * FROM ci_repositories WHERE id = $1"
+
+    pool.add_fetchrow(get_query, ("repo-1",), repo_row)
+
+    with patch.object(code_intel_app, "pool", pool), patch.object(
+        code_intel_app.os.path, "exists", return_value=True
+    ) as exists_mock, patch.object(code_intel_app.shutil, "rmtree") as rmtree_mock:
+        response = await client.delete("/repositories/repo-1")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True, "repo_id": "repo-1"}
+    exists_mock.assert_called_once_with(code_intel_app._repo_local_path(repo_row["url"], "repo-1"))
+    rmtree_mock.assert_called_once_with(
+        code_intel_app._repo_local_path(repo_row["url"], "repo-1"),
+        ignore_errors=True,
+    )
+    assert pool.execute_calls == [("DELETE FROM ci_repositories WHERE id = $1", ("repo-1",))]
 
 
 @pytest.mark.asyncio
@@ -220,7 +261,7 @@ async def test_symbol_search_endpoint(client):
     )
 
     async def search_symbols(repo_url, q, kind=None):
-        assert repo_url == repo_row["url"]
+        assert repo_url == code_intel_app._repo_local_path(repo_row["url"], "repo-1")
         assert q == "svc"
         assert kind is None
         return [symbol]
@@ -245,14 +286,14 @@ async def test_impact_analysis_endpoint(client):
     repo_query = "SELECT * FROM ci_repositories WHERE id = $1"
 
     async def get_impact_analysis(repo_url, lookup):
-        assert repo_url == repo_row["url"]
+        assert repo_url == code_intel_app._repo_local_path(repo_row["url"], "repo-1")
         assert lookup == "svc.handler"
         return SimpleNamespace(
             target=lookup,
-            direct=["svc.dep"],
-            transitive=["svc.deep"],
-            related_tests=["tests/test_svc.py"],
-            risk_score=0.7,
+            callers=[],
+            callees=["svc.dep"],
+            dependents=["svc.deep"],
+            importers=["tests/test_svc.py"],
         )
 
     engine = SimpleNamespace(get_impact_analysis=get_impact_analysis)
@@ -265,7 +306,7 @@ async def test_impact_analysis_endpoint(client):
         assert response.status_code == 200
         body = response.json()
         assert body["direct"] == ["svc.dep"]
-        assert body["risk_score"] == 0.7
+        assert body["risk_score"] == 0.1
 
 
 @pytest.mark.asyncio
@@ -336,7 +377,7 @@ async def test_hotspots_endpoint(client):
     repo_query = "SELECT * FROM ci_repositories WHERE id = $1"
 
     async def get_complexity_signals(repo_url, limit=20):
-        assert repo_url == repo_row["url"]
+        assert repo_url == code_intel_app._repo_local_path(repo_row["url"], "repo-1")
         assert limit == 20
         return [
             {

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import uuid
 from contextlib import asynccontextmanager
@@ -38,6 +39,7 @@ from .models import (
 )
 
 logger = structlog.get_logger(__name__)
+REPOS_DIR = "/app/repos"
 
 # ---------------------------------------------------------------------------
 # Global state
@@ -61,6 +63,11 @@ def _get_cgc_engine():
         except ImportError:
             logger.warning("codegraph package not available; CGC features disabled")
     return cgc_engine
+
+
+def _repo_local_path(repo_url: str, repo_id: str) -> str:
+    """Return the local filesystem path for a cloned repository."""
+    return f"{REPOS_DIR}/{repo_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +191,24 @@ async def get_repository(repo_id: str):
     return {"repository": _row_to_dict(row)}
 
 
+@app.delete("/repositories/{repo_id}")
+async def delete_repository(repo_id: str):
+    db = _ensure_pool()
+    repo = await db.fetchrow("SELECT * FROM ci_repositories WHERE id = $1", repo_id)
+    if not repo:
+        raise HTTPException(404, "Repository not found")
+
+    local_path = _repo_local_path(repo["url"], repo_id)
+    if os.path.exists(local_path):
+        shutil.rmtree(local_path, ignore_errors=True)
+        logger.info("Deleted local clone", path=local_path)
+
+    await db.execute("DELETE FROM ci_repositories WHERE id = $1", repo_id)
+    logger.info("Deleted repository", repo_id=repo_id)
+
+    return {"deleted": True, "repo_id": repo_id}
+
+
 @app.post("/repositories/{repo_id}/index", response_model=IndexTriggerResponse)
 async def trigger_index(repo_id: str, req: TriggerIndexRequest, background_tasks: BackgroundTasks):
     db = _ensure_pool()
@@ -215,7 +240,7 @@ async def trigger_index(repo_id: str, req: TriggerIndexRequest, background_tasks
         build_id, snapshot_id,
     )
 
-    background_tasks.add_task(_run_indexing, build_id, snapshot_id, repo["url"], branch, req.languages)
+    background_tasks.add_task(_run_indexing, build_id, snapshot_id, repo["url"], branch, req.languages, repo_id)
 
     return {
         "snapshot": _row_to_dict(snapshot_row),
@@ -230,8 +255,11 @@ async def _run_indexing(
     repo_url: str,
     branch: str,
     languages: list[str] | None,
+    repo_id: str = "",
 ):
-    """Background task: run CGC indexing and persist results."""
+    """Background task: clone repo, run CGC indexing, persist results."""
+    import subprocess
+
     db = _ensure_pool()
     engine = _get_cgc_engine()
     now = datetime.now(timezone.utc)
@@ -241,44 +269,64 @@ async def _run_indexing(
         build_id, now,
     )
 
+    local_path = _repo_local_path(repo_url, repo_id)
+
+    # Clone or update repo
+    try:
+        if os.path.exists(os.path.join(local_path, ".git")):
+            subprocess.run(
+                ["git", "-C", local_path, "fetch", "--depth", "1", "origin", branch],
+                capture_output=True, timeout=120,
+            )
+            subprocess.run(
+                ["git", "-C", local_path, "checkout", "FETCH_HEAD"],
+                capture_output=True, timeout=30,
+            )
+            logger.info("Repo updated", path=local_path, branch=branch)
+        else:
+            os.makedirs(local_path, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--branch", branch, repo_url, local_path],
+                capture_output=True, timeout=120, check=True,
+            )
+            logger.info("Repo cloned", path=local_path, branch=branch)
+    except Exception as exc:
+        await db.execute(
+            """UPDATE ci_graph_builds
+            SET status = 'FAILED', completed_at = $2, error_message = $3
+            WHERE id = $1""",
+            build_id, datetime.now(timezone.utc), f"Git clone failed: {exc}"[:2000],
+        )
+        logger.error("Git clone failed", build_id=build_id, error=str(exc))
+        return
+
     if engine is None:
         await db.execute(
-            """
-            UPDATE ci_graph_builds
+            """UPDATE ci_graph_builds
             SET status = 'FAILED', completed_at = $2, error_message = 'CGC engine not available'
-            WHERE id = $1
-            """,
+            WHERE id = $1""",
             build_id, datetime.now(timezone.utc),
         )
         return
 
     try:
-        result = await engine.index_repository(repo_url)
+        result = await engine.index_repository(local_path)
         completed = datetime.now(timezone.utc)
         duration_ms = int((completed - now).total_seconds() * 1000)
 
         await db.execute(
-            """
-            UPDATE ci_graph_builds
+            """UPDATE ci_graph_builds
             SET status = 'COMPLETED', completed_at = $2, duration_ms = $3,
                 node_count = $4, edge_count = $5
-            WHERE id = $1
-            """,
+            WHERE id = $1""",
             build_id, completed, duration_ms, 0, 0,
         )
-        logger.info(
-            "Indexing completed",
-            build_id=build_id,
-            status=result.status,
-            message=result.message,
-        )
+        logger.info("Indexing completed", build_id=build_id, status=result.status, message=result.message)
     except Exception as exc:
         await db.execute(
-            """
-            UPDATE ci_graph_builds
+            """UPDATE ci_graph_builds
             SET status = 'FAILED', completed_at = $2, error_message = $3
-            WHERE id = $1
-            """,
+            WHERE id = $1""",
             build_id, datetime.now(timezone.utc), str(exc)[:2000],
         )
         logger.error("Indexing failed", build_id=build_id, error=str(exc))
@@ -305,7 +353,7 @@ async def get_repo_summary(repo_id: str):
     engine = _get_cgc_engine()
     if engine:
         try:
-            stats = await engine.get_repository_summary(repo["url"])
+            stats = await engine.get_repository_summary(_repo_local_path(repo["url"], repo_id))
             return {
                 "total_files": stats.file_count,
                 "total_symbols": stats.function_count,
@@ -376,7 +424,7 @@ async def search_symbols(
     engine = _get_cgc_engine()
     if engine:
         try:
-            symbols = await engine.search_symbols(repo["url"], q, kind=type)
+            symbols = await engine.search_symbols(_repo_local_path(repo["url"], repo_id), q, kind=type)
             results = [
                 {
                     "id": "",
@@ -471,7 +519,7 @@ async def get_impact(
     engine = _get_cgc_engine()
     if engine:
         try:
-            result = await engine.get_impact_analysis(repo["url"], lookup)
+            result = await engine.get_impact_analysis(_repo_local_path(repo["url"], repo_id), lookup)
             direct = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in (result.callers + result.callees)]
             transitive = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in result.dependents]
             related_tests = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in result.importers if "test" in str(d).lower()]
@@ -568,7 +616,7 @@ async def get_hotspots(
     engine = _get_cgc_engine()
     if engine:
         try:
-            hotspots = await engine.get_complexity_signals(repo["url"], limit=limit)
+            hotspots = await engine.get_complexity_signals(_repo_local_path(repo["url"], repo_id), limit=limit)
             return {"hotspots": hotspots[:limit]}
         except Exception as exc:
             logger.warning("CGC hotspots failed, falling back to DB", error=str(exc))

@@ -50,6 +50,13 @@ export const ks = {
 export const ci = {
   repositories: () => fetchJSON<any>(`${CODE_INTEL_URL}/repositories`),
   repository: (repoId: string) => fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}`),
+  createRepository: (body: { url: string; name: string; default_branch: string }) =>
+    fetchJSON<any>(`${CODE_INTEL_URL}/repositories`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteRepository: (repoId: string) =>
+    fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}`, { method: "DELETE" }),
   summary: (repoId: string) => fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}/summary`),
   snapshots: (repoId: string) => fetchJSON<any>(`${CODE_INTEL_URL}/repositories/${repoId}/snapshots`),
   searchSymbols: (repoId: string, q: string, type?: string) => {
