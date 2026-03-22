@@ -8,3 +8,9 @@ version = "0.1.0"
 description = "CGC adapter package for clab-platform"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2.0.0", "structlog>=23.0.0"]
+
+[tool.setuptools]
+packages = ["codegraph"]
+
+[tool.setuptools.package-dir]
+codegraph = "."
