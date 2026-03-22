@@ -68,7 +68,7 @@ async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
     if not state.get("cmux_workspace_id"):
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         await ProjectBootstrapper().provision(workdir)
-        from local_agent.config import _find_agent_workspace, _planner_runtime
+        from local_agent.config import _find_agent_workspace, _get_orchestrator_ws_name, _planner_runtime
         if _planner_runtime and _planner_runtime.workspace_id:
             runtime.workspace_id = _planner_runtime.workspace_id
             runtime.workspace_name = _planner_runtime.workspace_name
@@ -76,7 +76,9 @@ async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
             state["cmux_workspace_id"] = _planner_runtime.workspace_id
         else:
             # Try to reuse existing agent workspace
-            existing = await _find_agent_workspace(runtime)
+            parent_name = await _get_orchestrator_ws_name(runtime)
+            agent_ws_name = f"{parent_name}:agent"
+            existing = await _find_agent_workspace(runtime, agent_ws_name)
             if existing:
                 runtime.workspace_id = existing
                 runtime._current_workdir = workdir
@@ -268,7 +270,7 @@ async def parallel_executor_node(state: AgentState) -> dict:
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         workdir = state.get("workdir", ".")
         await ProjectBootstrapper().provision(workdir)
-        from local_agent.config import _find_agent_workspace, _planner_runtime
+        from local_agent.config import _find_agent_workspace, _get_orchestrator_ws_name, _planner_runtime
         if _planner_runtime and _planner_runtime.workspace_id:
             runtime.workspace_id = _planner_runtime.workspace_id
             runtime.workspace_name = _planner_runtime.workspace_name
@@ -276,7 +278,9 @@ async def parallel_executor_node(state: AgentState) -> dict:
             state["cmux_workspace_id"] = _planner_runtime.workspace_id
         else:
             # Try to reuse existing agent workspace
-            existing = await _find_agent_workspace(runtime)
+            parent_name = await _get_orchestrator_ws_name(runtime)
+            agent_ws_name = f"{parent_name}:agent"
+            existing = await _find_agent_workspace(runtime, agent_ws_name)
             if existing:
                 runtime.workspace_id = existing
                 runtime._current_workdir = workdir

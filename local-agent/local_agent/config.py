@@ -68,19 +68,36 @@ async def invoke_cli(system_prompt: str, user_prompt: str, timeout: float = 120)
     return await _invoke_via_subprocess(system_prompt, user_prompt, timeout)
 
 
-async def _find_agent_workspace(runtime) -> str | None:
-    """Find existing agent workspace in cmux to reuse."""
+async def _find_agent_workspace(runtime, agent_ws_name: str) -> str | None:
+    """Find existing agent workspace by exact name match."""
     try:
         workspaces = await runtime.cmux.workspace_list()
         for ws in workspaces:
             name = ws.get("name", ws.get("title", ""))
             ws_id = ws.get("id", ws.get("workspace_id", ""))
-            if "agent" in name.lower() or "codex" == name.lower():
+            if name == agent_ws_name:
                 logger.info("Found existing agent workspace: %s (%s)", ws_id, name)
                 return ws_id
     except Exception as exc:
         logger.debug("Failed to list workspaces: %s", exc)
     return None
+
+
+async def _get_orchestrator_ws_name(runtime) -> str:
+    """Get the orchestrator workspace name from cmux (caller's workspace)."""
+    try:
+        result = await runtime.cmux.identify()
+        caller = result.get("caller", result.get("focused", {}))
+        ws_ref = caller.get("workspace_ref", "")
+        workspaces = await runtime.cmux.workspace_list()
+        for ws in workspaces:
+            ref = ws.get("ref", ws.get("workspace_ref", ""))
+            ws_id = ws.get("id", ws.get("workspace_id", ""))
+            if ref == ws_ref or ws_id == ws_ref:
+                return ws.get("name", ws.get("title", "workspace"))
+    except Exception:
+        pass
+    return "workspace"
 
 
 async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeout: float) -> str:
@@ -90,15 +107,17 @@ async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeou
     workdir = get_config().workdir
 
     if not runtime.workspace_id:
-        # Try to find and reuse existing agent workspace
-        existing_ws = await _find_agent_workspace(runtime)
+        parent_name = await _get_orchestrator_ws_name(runtime)
+        agent_ws_name = f"{parent_name}:agent"
+
+        existing_ws = await _find_agent_workspace(runtime, agent_ws_name)
         if existing_ws:
             runtime.workspace_id = existing_ws
-            runtime.workspace_name = "agent-planner"
+            runtime.workspace_name = agent_ws_name
             runtime._current_workdir = workdir
-            logger.info("Reusing existing agent workspace: %s", existing_ws)
+            logger.info("Reusing agent workspace: %s (%s)", existing_ws, agent_ws_name)
         else:
-            await runtime.create_agent("agent-planner", workdir=workdir, reuse_current=False)
+            await runtime.create_agent(agent_ws_name, workdir=workdir, reuse_current=False)
 
     if not _planner_engine_started:
         surfaces = await runtime.cmux.surface_list(runtime.workspace_id)
@@ -106,11 +125,9 @@ async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeou
         if not main_id:
             raise RuntimeError("No main surface in agent workspace")
 
-        # Check if codex is already running on this surface
         try:
             output = await runtime.cmux.read_text(main_id)
             if "gpt-" in output.lower() and "\u203a" in output:
-                # Codex TUI already running - just register the surface
                 runtime._engine_surfaces["codex"] = main_id
                 runtime.surfaces.register("codex", main_id, "codex")
                 _planner_engine_started = True
