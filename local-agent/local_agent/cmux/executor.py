@@ -13,6 +13,7 @@ Architecture:
 This module does NOT judge task success. It manages the execution environment
 and returns raw output + state for clab's state machine to evaluate.
 """
+# Workspace lifecycle: persists across missions
 
 from __future__ import annotations
 
@@ -219,6 +220,10 @@ class CmuxRuntime:
         self.workspace_name = name
         self._current_workdir = workdir
         self._split_targets = []
+        try:
+            await self.cmux.workspace_rename(name[:40], self.workspace_id)
+        except Exception:
+            pass
         logger.info("New workspace created: %s (%s)", self.workspace_id, name)
         return self.workspace_id
 
