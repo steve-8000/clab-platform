@@ -67,6 +67,10 @@ async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
     if not state.get("cmux_workspace_id"):
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         await ProjectBootstrapper().provision(workdir)
+        # Inherit orchestrator WS ID from planner runtime (for browser allocation)
+        from local_agent.config import _planner_runtime
+        if _planner_runtime and _planner_runtime.workspace_id:
+            runtime._orchestrator_ws_id = _planner_runtime.workspace_id
         goal = state.get("goal", "mission")
         ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
         state["cmux_workspace_id"] = ws_id
@@ -253,6 +257,10 @@ async def parallel_executor_node(state: dict) -> dict:
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         workdir = state.get("workdir", ".")
         await ProjectBootstrapper().provision(workdir)
+        # Inherit orchestrator WS ID from planner runtime (for browser allocation)
+        from local_agent.config import _planner_runtime
+        if _planner_runtime and _planner_runtime.workspace_id:
+            runtime._orchestrator_ws_id = _planner_runtime.workspace_id
         goal = state.get("goal", "mission")
         ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
         state["cmux_workspace_id"] = ws_id
