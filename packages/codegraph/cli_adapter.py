@@ -91,7 +91,12 @@ class CgcCliEngineAdapter(CodeIntelEngine):
         if stderr:
             log.debug("cgc.stderr", stderr=stderr[:500])
 
-        return stdout
+        # CGC outputs Rich tables to stderr; combine both streams
+        combined = stdout
+        if stderr:
+            combined = f"{stdout}
+{stderr}" if stdout else stderr
+        return combined
 
     @staticmethod
     def _clean_rich(raw: str) -> str:
