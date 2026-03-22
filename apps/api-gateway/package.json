@@ -14,7 +14,6 @@
     "hono": "^4.7",
     "@hono/node-server": "^1.13",
     "@clab/domain": "workspace:*",
-    "@clab/sdk": "workspace:*",
     "@clab/events": "workspace:*",
     "@clab/mcp-contracts": "workspace:*",
     "@clab/telemetry": "workspace:*"

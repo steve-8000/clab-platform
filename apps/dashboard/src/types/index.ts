@@ -4,19 +4,18 @@ export type MissionStatus =
   | "DRAFT"
   | "PLANNED"
   | "RUNNING"
+  | "REVIEWING"
   | "COMPLETED"
   | "FAILED"
-  | "CANCELLED"
-  | "REVIEW"
-  | "PENDING_REVIEW"
   | "ABORTED";
 
-export type MissionPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type MissionPriority = "LOW" | "NORMAL" | "HIGH" | "CRITICAL";
 
 export type TaskStatus =
-  | "PENDING"
   | "QUEUED"
+  | "ASSIGNED"
   | "RUNNING"
+  | "NEEDS_REVIEW"
   | "SUCCEEDED"
   | "FAILED"
   | "BLOCKED"
@@ -24,14 +23,22 @@ export type TaskStatus =
 
 export type WaveStatus =
   | "PENDING"
+  | "READY"
   | "RUNNING"
+  | "BLOCKED"
   | "COMPLETED"
-  | "FAILED"
-  | "CANCELLED";
+  | "FAILED";
 
-export type SessionState = "IDLE" | "RUNNING" | "STALE" | "CLOSED";
+export type SessionState =
+  | "IDLE"
+  | "BOUND"
+  | "RUNNING"
+  | "AWAITING_INPUT"
+  | "STALE"
+  | "LOST"
+  | "CLOSED";
 
-export type KnowledgeSource = "MANUAL" | "EXTRACTED" | "DISTILLED";
+export type KnowledgeSource = "MANUAL" | "EXTRACTED" | "DISTILLED" | "IMPORTED";
 
 export interface Task {
   id: string;

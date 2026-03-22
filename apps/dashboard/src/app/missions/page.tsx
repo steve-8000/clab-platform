@@ -6,8 +6,8 @@ import { MissionCard } from "@/components/missions/mission-card";
 import { ListSkeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 
-const STATUSES: (MissionStatus | "ALL")[] = ["ALL", "DRAFT", "PLANNED", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"];
-const PRIORITIES: (MissionPriority | "ALL")[] = ["ALL", "LOW", "MEDIUM", "HIGH", "CRITICAL"];
+const STATUSES: (MissionStatus | "ALL")[] = ["ALL", "DRAFT", "PLANNED", "RUNNING", "REVIEWING", "COMPLETED", "FAILED", "ABORTED"];
+const PRIORITIES: (MissionPriority | "ALL")[] = ["ALL", "LOW", "NORMAL", "HIGH", "CRITICAL"];
 
 export default function MissionsPage() {
   const [missions, setMissions] = useState<Mission[]>([]);

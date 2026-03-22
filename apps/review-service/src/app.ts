@@ -11,10 +11,12 @@ const logger = createLogger("review-service");
 
 const { tasks, taskRuns, waves, missions, artifacts, approvals } = schema;
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://clab:clab-stg-pass@postgres:5432/clab";
-const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://mission-service:4002";
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || "http://orchestrator:4001";
 const sql = postgres(DATABASE_URL);
 const db = drizzle(sql, { schema });
 export const bus = new EventBus();
+export let busConnected = false;
+export function setBusConnected(v: boolean) { busConnected = v; }
 
 /** Retry a function up to maxRetries times with delayMs between attempts. */
 async function withRetry<T>(fn: () => Promise<T>, maxRetries: number, delayMs: number): Promise<T> {
@@ -163,9 +165,9 @@ export const app = new Hono()
       healthy = false;
     }
 
-    // Check EventBus connectivity
-    checks.eventBus = bus["nc"] ? "ok" : "disconnected";
-    if (!bus["nc"]) healthy = false;
+    // Check EventBus connectivity (track via module-level flag set on connect)
+    checks.eventBus = busConnected ? "ok" : "disconnected";
+    if (!busConnected) healthy = false;
 
     const dbOk = checks.db === "ok";
     return c.json({ status: healthy ? "ok" : "degraded", ...checks }, dbOk ? 200 : 503);
@@ -223,7 +225,8 @@ export const app = new Hono()
         const [approval] = await db.select().from(approvals).where(eq(approvals.id, id));
         if (approval?.missionId && approval?.taskId) {
           // Fire-and-forget with retry — approval is already GRANTED
-          notifyOrchestratorUnblock(approval.missionId, approval.taskId, id);
+          notifyOrchestratorUnblock(approval.missionId, approval.taskId, id)
+            .catch(err => logger.error("notifyOrchestratorUnblock failed", { error: err instanceof Error ? err.message : String(err) }));
         }
       }
 

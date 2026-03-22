@@ -7,7 +7,9 @@ import {
   WAVE_TRANSITIONS,
   TASK_TRANSITIONS,
   assertTransition,
+  MissionPriority,
 } from "@clab/domain";
+import type { MissionStatus, WaveStatus, TaskStatus, Role } from "@clab/domain";
 import { PolicyEngine } from "@clab/policy";
 
 const policyEngine = new PolicyEngine();
@@ -35,6 +37,10 @@ interface TaskSpec {
   description: string;
   role: string;
   engine: string;
+}
+
+interface PreKResponse {
+  relatedDocs?: Array<{ path: string; excerpt: string }>;
 }
 
 function decomposeObjective(objective: string, defaultRole: string, defaultEngine: string): TaskSpec[] {
@@ -77,14 +83,21 @@ missionRoutes.post("/", async (c) => {
     return c.json({ error: "title, objective, workspaceId required" }, 400);
   }
 
+  // Validate priority against allowed enum values
+  const priority: MissionPriority = body.priority || "NORMAL";
+  if (!MissionPriority.safeParse(priority).success) {
+    return c.json({ error: `Invalid priority: ${body.priority}. Must be one of: LOW, NORMAL, HIGH, CRITICAL` }, 400);
+  }
+
   // 1. Create mission
   const [mission] = await db.insert(missions).values({
     workspaceId,
     title,
     objective,
     status: "DRAFT",
-    priority: body.priority || "NORMAL",
+    priority,
   }).returning();
+  if (!mission) return c.json({ error: "Failed to create mission" }, 500);
 
   logger.info("Mission created", { missionId: mission.id });
 
@@ -100,6 +113,7 @@ missionRoutes.post("/", async (c) => {
     summary: `Plan for: ${title} (${taskSpecs.length} tasks, ${waveCount} waves)`,
     waveCount,
   }).returning();
+  if (!plan) return c.json({ error: "Failed to create plan" }, 500);
 
   const allTasks = [];
   const allWaves = [];
@@ -115,6 +129,7 @@ missionRoutes.post("/", async (c) => {
       status: "PENDING",
       directive: w === 0 ? objective : `Continue: ${objective}`,
     }).returning();
+    if (!wave) return c.json({ error: "Failed to create wave" }, 500);
     allWaves.push(wave);
 
     // Publish wave.created event
@@ -136,9 +151,9 @@ missionRoutes.post("/", async (c) => {
           body: JSON.stringify({ task: spec.description, roleId: spec.role }),
         });
         if (preKRes.ok) {
-          const preK = await preKRes.json() as any;
-          if (preK.relatedDocs?.length > 0) {
-            const context = preK.relatedDocs.map((d: any) => `[${d.path}]: ${d.excerpt}`).join("\n");
+          const preK = await preKRes.json() as PreKResponse;
+          if (preK.relatedDocs?.length) {
+            const context = preK.relatedDocs.map((d) => `[${d.path}]: ${d.excerpt}`).join("\n");
             enrichedDesc = `${spec.description}\n\n## Prior Knowledge\n${context}`;
           }
         }
@@ -153,6 +168,7 @@ missionRoutes.post("/", async (c) => {
         engine: spec.engine,
         status: "QUEUED",
       }).returning();
+      if (!task) return c.json({ error: "Failed to create task" }, 500);
       allTasks.push(task);
     }
   }
@@ -191,7 +207,7 @@ missionRoutes.post("/:id/start", async (c) => {
   const [missionData] = await db.select().from(missions).where(eq(missions.id, id));
   if (!missionData) return c.json({ error: "Mission not found" }, 404);
 
-  assertTransition(MISSION_TRANSITIONS, missionData.status as "PLANNED", "RUNNING");
+  assertTransition(MISSION_TRANSITIONS, missionData.status as MissionStatus, "RUNNING");
   await db.update(missions).set({ status: "RUNNING", updatedAt: new Date() }).where(eq(missions.id, id));
 
   // 2. Start first wave only (subsequent waves triggered by wave completion)
@@ -200,7 +216,7 @@ missionRoutes.post("/:id/start", async (c) => {
   const firstWave = sortedWaves[0];
 
   if (firstWave) {
-    assertTransition(WAVE_TRANSITIONS, firstWave.status as "PENDING", "READY");
+    assertTransition(WAVE_TRANSITIONS, firstWave.status as WaveStatus, "READY");
     await db.update(waves).set({ status: "READY" }).where(eq(waves.id, firstWave.id));
 
     // Publish wave.ready event
@@ -225,14 +241,14 @@ missionRoutes.post("/:id/start", async (c) => {
     for (const task of waveTasks) {
       // Policy evaluation before assignment
       const policyDecision = policyEngine.evaluate({
-        role: task.role as any,
+        role: task.role as Role,
         action: task.description,
         context: { title: task.title, engine: task.engine },
       });
 
       if (!policyDecision.allow) {
         // Task blocked by policy — mark as BLOCKED
-        assertTransition(TASK_TRANSITIONS, task.status as "QUEUED", "BLOCKED");
+        assertTransition(TASK_TRANSITIONS, task.status as TaskStatus, "BLOCKED");
         await db.update(tasks).set({ status: "BLOCKED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
         policyResults.push({
           taskId: task.id,
@@ -254,7 +270,7 @@ missionRoutes.post("/:id/start", async (c) => {
         continue;
       }
 
-      assertTransition(TASK_TRANSITIONS, task.status as "QUEUED", "ASSIGNED");
+      assertTransition(TASK_TRANSITIONS, task.status as TaskStatus, "ASSIGNED");
       await db.update(tasks).set({ status: "ASSIGNED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
       policyResults.push({
         taskId: task.id,
@@ -336,7 +352,7 @@ missionRoutes.post("/:missionId/tasks/:taskId/unblock", async (c) => {
   if (task.status !== "BLOCKED") return c.json({ error: `Task is not BLOCKED (current: ${task.status})` }, 409);
 
   // BLOCKED → QUEUED → ASSIGNED
-  assertTransition(TASK_TRANSITIONS, task.status as "BLOCKED", "QUEUED");
+  assertTransition(TASK_TRANSITIONS, task.status as TaskStatus, "QUEUED");
   await db.update(tasks).set({ status: "QUEUED", updatedAt: new Date() }).where(eq(tasks.id, taskId));
 
   assertTransition(TASK_TRANSITIONS, "QUEUED" as const, "ASSIGNED");
@@ -368,7 +384,7 @@ missionRoutes.post("/:id/abort", async (c) => {
   if (!mission) return c.json({ error: "Mission not found" }, 404);
 
   // Validate state transition to ABORTED
-  assertTransition(MISSION_TRANSITIONS, mission.status as any, "ABORTED");
+  assertTransition(MISSION_TRANSITIONS, mission.status as MissionStatus, "ABORTED");
   await db.update(missions).set({ status: "ABORTED", updatedAt: new Date() }).where(eq(missions.id, id));
 
   // Cancel all non-terminal tasks
@@ -377,7 +393,7 @@ missionRoutes.post("/:id/abort", async (c) => {
     and(eq(tasks.missionId, id), notInArray(tasks.status, terminalTaskStatuses)),
   );
   for (const task of missionTasks) {
-    assertTransition(TASK_TRANSITIONS, task.status as any, "CANCELLED");
+    assertTransition(TASK_TRANSITIONS, task.status as TaskStatus, "CANCELLED");
     await db.update(tasks).set({ status: "CANCELLED", updatedAt: new Date() }).where(eq(tasks.id, task.id));
   }
 
@@ -387,7 +403,7 @@ missionRoutes.post("/:id/abort", async (c) => {
     and(eq(waves.missionId, id), notInArray(waves.status, terminalWaveStatuses)),
   );
   for (const wave of missionWaves) {
-    assertTransition(WAVE_TRANSITIONS, wave.status as any, "FAILED");
+    assertTransition(WAVE_TRANSITIONS, wave.status as WaveStatus, "FAILED");
     await db.update(waves).set({ status: "FAILED" }).where(eq(waves.id, wave.id));
   }
 

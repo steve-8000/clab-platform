@@ -7,7 +7,6 @@
     { "path": "../../packages/db" },
     { "path": "../../packages/events" },
     { "path": "../../packages/policy" },
-    { "path": "../../packages/prompts" },
     { "path": "../../packages/telemetry" }
   ]
 }

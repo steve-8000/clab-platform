@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "clab": {
+      "command": "pnpm",
+      "args": [
+        "--filter",
+        "@clab/mcp-server",
+        "exec",
+        "tsx",
+        "src/index.ts"
+      ]
+    }
+  }
+}

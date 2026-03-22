@@ -13,11 +13,17 @@ export const store = new LocalKnowledgeStore(STORE_DIR);
 export const bus = new EventBus();
 
 let busConnected = false;
+let busPromise: Promise<void> | null = null;
 
-export async function ensureBus(): Promise<void> {
-  if (busConnected) return;
-  await bus.connect();
-  busConnected = true;
+export function ensureBus(): Promise<void> {
+  if (busConnected) return Promise.resolve();
+  if (!busPromise) {
+    busPromise = bus.connect().then(() => { busConnected = true; }).catch((err: unknown) => {
+      busPromise = null;
+      throw err;
+    });
+  }
+  return busPromise;
 }
 
 export function isBusConnected(): boolean {

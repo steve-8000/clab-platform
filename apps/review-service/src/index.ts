@@ -1,5 +1,5 @@
 import { serve } from "@hono/node-server";
-import { app, reviewTask, sql, bus } from "./app.js";
+import { app, reviewTask, sql, bus, setBusConnected } from "./app.js";
 import { createLogger } from "@clab/telemetry";
 import { createEvent, type EventEnvelope } from "@clab/events";
 
@@ -10,6 +10,7 @@ const NATS_URL = process.env.NATS_URL || "nats://nats:4222";
 async function startEventBus() {
   try {
     await bus.connect(NATS_URL);
+    setBusConnected(true);
     logger.info("EventBus connected");
 
     await bus.subscribe("*.task.completed", async (event) => {
@@ -45,6 +46,7 @@ async function shutdown(signal: string) {
   logger.info("Shutting down", { signal });
   try {
     await bus.close();
+    setBusConnected(false);
     logger.info("EventBus drained");
   } catch (err) {
     logger.error("EventBus drain failed", { error: err instanceof Error ? err.message : String(err) });

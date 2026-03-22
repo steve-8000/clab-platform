@@ -1,7 +1,10 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
+import { createLogger } from "@clab/telemetry";
 import { store, bus, ensureBus } from "../store.js";
 import { extractKeywords } from "../services/keyword-extractor.js";
+
+const logger = createLogger("knowledge-service");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -142,9 +145,9 @@ insights.post("/extract", async (c) => {
           },
         });
       } catch (pubErr) {
-        console.warn(
-          `[knowledge-service] Failed to publish knowledge.extracted event for taskRun=${body.taskRunId}:`,
-          pubErr,
+        logger.warn(
+          `Failed to publish knowledge.extracted event for taskRun=${body.taskRunId}`,
+          { error: pubErr },
         );
       }
     }

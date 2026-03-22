@@ -53,7 +53,9 @@ dashboard.get("/", async (c) => {
       if (insightsRes.ok) {
         recentInsights = (await insightsRes.json() as Array<Record<string, unknown>>).slice(0, 10);
       }
-    } catch {}
+    } catch (err) {
+      console.warn("Failed to fetch knowledge stats:", String(err));
+    }
 
     // Pipeline stats
     const pipelineStats = {

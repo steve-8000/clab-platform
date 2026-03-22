@@ -13,8 +13,7 @@
     "next": "^15.2",
     "react": "^19",
     "react-dom": "^19",
-    "@clab/domain": "workspace:*",
-    "@clab/sdk": "workspace:*"
+    "@clab/domain": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7",
