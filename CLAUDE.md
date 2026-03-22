@@ -54,7 +54,7 @@ Agent Workspace "agent-planner" (planner creates at plan stage):
 1. Agents execute ALL tasks without asking for confirmation
 2. Permission prompts are auto-accepted (monitor.py handles this)
 3. Design questions are auto-resolved — agents pick the simplest approach
-4. Only stop when explicitly told: "stop", "중단", "그만"
+4. Only stop when explicitly told: "stop"
 
 ## Workflow
 
@@ -79,6 +79,13 @@ Step 3: w1   → split down  → w3       (planner/reviewer stays on main)
 - Alternate between left/right columns when splitting down
 - Cascading down from same surface makes each subsequent pane smaller
 - WorkerPool (worker.py) and CmuxRuntime (executor.py) both follow this pattern
+
+## Codex Prompting Rules
+
+- Prefer direct inline instructions over prompt file references
+- When using prompt files: preamble MUST include "Do not produce a task list or plan. Execute now."
+- Keep edits to ≤4 per prompt (more causes codex to switch to planning mode)
+- Always end with "Modify files directly. Do not summarize or plan."
 
 ## cmux Notification-Based Monitoring
 
