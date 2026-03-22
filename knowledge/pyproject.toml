@@ -1,0 +1,13 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langgraph-knowledge"
+version = "0.1.0"
+description = "Knowledge layer for LangGraph - ported from clab-platform"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "pydantic>=2.0",
+]

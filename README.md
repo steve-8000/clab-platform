@@ -1,270 +1,103 @@
-# clab-platform -- Execution Control Plane for Multi-Agent Orchestration
+# clab-platform — 3-Layer LangGraph Agent Platform
 
-Stateful execution control plane where Claude orchestrates Codex/Claude agents through structured missions, waves, and tasks.
-
-```
-User Request -> Mission -> Plan -> Waves -> Tasks -> Agent Sessions -> Artifacts -> Review
-```
-
-## Quick Start
-
-```bash
-# 1. Install prerequisites (user responsibility)
-#    - Node.js >= 22     : https://nodejs.org or nvm install 22
-#    - pnpm >= 9.15      : corepack enable && corepack prepare pnpm@9.15.4 --activate
-#    - Claude Code CLI   : curl -fsSL https://claude.ai/install.sh | sh
-#    - Codex CLI         : npm install -g @openai/codex
-#    - Docker (optional) : https://docs.docker.com/get-docker/
-
-# 2. Clone & setup
-git clone https://github.com/steve-8000/clab-platform.git
-cd clab-platform
-./scripts/setup.sh    # installs deps and creates .env
-
-# 3. Start local dependencies and services
-docker compose -f infra/docker/docker-compose.yml up -d postgres nats
-pnpm db:push
-pnpm dev
-```
-
-## Prerequisites
-
-Install these **before** running `setup.sh`:
-
-| Tool | Version | Install |
-|------|---------|---------|
-| Node.js | >= 22 | https://nodejs.org or `nvm install 22` |
-| pnpm | >= 9.15 | `corepack enable && corepack prepare pnpm@9.15.4 --activate` |
-| Claude Code CLI | latest | `curl -fsSL https://claude.ai/install.sh \| sh` or `npm install -g @anthropic-ai/claude-code` |
-| Codex CLI | latest | `npm install -g @openai/codex` |
-| Docker | any | https://docs.docker.com/get-docker/ (optional, for containers) |
-
-## What `setup.sh` Does
-
-1. Verifies all prerequisites are installed
-2. `pnpm install` -- installs project dependencies
-3. Creates `.env`
-4. Prepares the repo for MCP-first operation with `.mcp.json`, `CLAUDE.md`, and `AGENTS.md`
-
-## How It Works
-
-```
-Claude / Codex                    clab MCP                      K8s / Host Runtime
-+----------------------+          +------------------------+    +---------------------+
-| CLAUDE.md / AGENTS.md | -------> | stdio MCP server       | -> | api-gateway          |
-| project hooks         |          | tool routing + policy  |    | orchestrator         |
-| local model client    |          |                        |    | review-service       |
-+----------------------+          +------------------------+    | knowledge-service    |
-                                                                 | dashboard / nats / db|
-                                                                 +---------------------+
-```
-
-- Claude and Codex reach the deployed platform through the `clab` MCP server.
-- `CLAB_API_URL` is the control-plane entry point.
-- K8s hosts the control plane and data plane; local Claude/Codex clients execute through MCP.
-
-## Manual Setup
-
-### 1. Install Dependencies & Configure
-
-```bash
-pnpm install
-
-# Create .env and set CLAB_API_URL for your target environment
-cp .env.example .env 2>/dev/null || true
-```
-
-### 2. Connect Claude and Codex Through MCP
-
-```bash
-# The repo already ships .mcp.json
-# Start Claude or Codex from this repository root
-claude
-codex
-```
-
-Claude project rules live in `.claude/settings.json` and `CLAUDE.md`. Codex rules live in `AGENTS.md`.
-
-### 5. Start Services
-
-```bash
-# Start PostgreSQL + NATS
-docker compose -f infra/docker/docker-compose.yml up -d postgres nats
-
-# Run database migrations
-pnpm db:push
-
-# Start all services in dev mode if running locally
-pnpm dev
-```
-
-### 6. Use the MCP Tools
-
-```bash
-# Launch from the repo root so .mcp.json is discovered
-claude
-codex
-```
+Stateful development agent platform with knowledge integration.
+LangGraph-native, 3-layer architecture: Control Plane + Knowledge Plane + Execution Plane.
 
 ## Architecture
 
 ```
-+----------------------------------------------------------+
-|                    api-gateway :4000                       |
-|                REST facade for MCP tools                  |
-+-------------+------------------------+-------------------+
-| orchestrator |  runtime-manager      |  review-service   |
-|    :4001     |       :4002           |     :4006         |
-+-------------+------------------------+-------------------+
-| knowledge-service :4007              | dashboard :3000   |
-+----------------------------------------------------------+
-|                PostgreSQL + NATS JetStream                |
-+----------------------------------------------------------+
+A. Control Plane (K8s :8000)         B. Knowledge Plane (K8s :4007)
+  ├── Session state                    ├── knowledge-service (Go)
+  ├── Checkpointer (PostgreSQL)        ├── Pre-K / Post-K / Insights
+  ├── Worker registry                  ├── Decision memory
+  ├── Task scheduling                  └── Integrity rules
+  ├── Human-in-the-loop API
+  ├── Audit logs / Artifact lineage
+  └── Dashboard API / SSE streaming
+
+C. Execution Plane (Local)
+  ├── Orchestrator LLM (planning, tool selection, replanning)
+  ├── LangGraph Agent (full StateGraph execution)
+  ├── Claude CLI / Codex CLI (code execution)
+  ├── Test / Build / Lint (verification)
+  └── WebSocket → Control Plane (state sync)
 ```
 
-## Domain Model
+## Quick Start
 
-```
-Mission
-  +- Plan
-      +- Wave[]
-          +- Task[]
-              +- TaskRun[]
-                  +- AgentSession
-                      +- Artifact[]
-                      +- Decision[]
-```
-
-## Services
-
-| Service | Port | Role |
-|---------|------|------|
-| api-gateway | 4000 | External entry point (REST) |
-| orchestrator | 4001 | Mission planning, wave scheduling |
-| runtime-manager | 4002 | Session and state tracking |
-| browser-service | 4005 | Browser automation (Playwright) |
-| review-service | 4006 | QA and verification |
-| knowledge-service | 4007 | AKB knowledge layer |
-| dashboard | 3000 | Operations UI |
-| worker-claude | -- | Claude CLI task executor |
-| worker-codex | -- | Codex CLI task executor |
-
-## Deployment (K8s / ArgoCD GitOps)
-
-### Build & Deploy to K8s
+### 1. Deploy K8s Services
 
 ```bash
-# Build all service images
-for svc in api-gateway orchestrator runtime-manager browser-service review-service knowledge-service; do
-  docker build --build-arg SERVICE=$svc -t clab/$svc:v3 .
-done
-docker build -f infra/docker/Dockerfile.dashboard -t clab/dashboard:v3 .
+# Build images
+docker build -t clab/control-plane:v1 control-plane/
+docker build -t clab/knowledge-service:v1 knowledge-server/
 
-# Import to k3s containerd (for imagePullPolicy: Never)
-for img in api-gateway orchestrator runtime-manager browser-service review-service knowledge-service dashboard; do
-  docker save clab/$img:v3 | ssh user@server ctr images import -
-done
-
-# ArgoCD syncs from the k8s-stg repo automatically
+# Deploy
+kubectl apply -f control-plane/k8s/control-plane.yaml
+kubectl apply -f knowledge-server/k8s/knowledge-service.yaml
 ```
 
-### GitOps Architecture
+### 2. Run Local Agent
+
+```bash
+cd local-agent
+./setup.sh
+source .venv/bin/activate
+
+python -m local_agent \
+  --control-plane https://control.clab.dev \
+  --knowledge https://knowledge.clab.dev \
+  --workdir ~/my-project \
+  "REST API 개발해줘"
+```
+
+## Components
+
+| Component | Language | Lines | Tests | Location |
+|-----------|----------|-------|-------|----------|
+| Control Plane | Python (FastAPI) | 471 | - | `control-plane/` |
+| Knowledge Server | Go (chi) | 2,154 | 32 | `knowledge-server/` |
+| Knowledge Library | Python | 2,235 | 47 | `knowledge/` |
+| Local Agent | Python (LangGraph) | 1,255 | - | `local-agent/` |
+
+## Execution Flow
 
 ```
-clab-platform (source)          k8s-stg (deployment repo)      K8s Cluster
-+------------------+           +---------------------+        +--------------+
-| apps/             |  build   | workloads/           |  sync  | ns:           |
-| packages/         | ------>  |   clab-platform/     | -----> | clab-platform |
-| infra/k8s/        |  image   |     kustomization.yaml| ArgoCD|              |
-| Dockerfile        |          |     services.yaml    |        | core workloads|
-+------------------+           |     dashboard.yaml   |        +--------------+
-                               |     postgres.yaml    |
-                               |     nats.yaml        |
-                               +---------------------+
+User Goal → Local Agent
+  ├── 1. Pre-K: search prior knowledge (→ Knowledge Plane)
+  ├── 2. Planner LLM: decompose into task graph
+  ├── 3. For each task:
+  │     ├── Claude/Codex CLI execution (local subprocess)
+  │     ├── Test/Build/Lint verification
+  │     ├── Failure → Replanner LLM → retry
+  │     └── Success → next task
+  ├── 4. Post-K: verify knowledge integrity
+  ├── 5. Extract insights → store in Knowledge
+  └── 6. Return results + artifacts
 ```
 
-| Component | Details |
-|-----------|---------|
-| Cluster | k3s (single node or HA) |
-| Namespace | `clab-platform` |
-| Ingress | nginx + cert-manager (Let's Encrypt TLS) |
-| Domain | `ai.clab.one` |
-| Storage | PostgreSQL StatefulSet + PVC |
-| Events | NATS JetStream |
-| Images | Local containerd (`imagePullPolicy: Never`) |
-| GitOps | ArgoCD watching `k8s-stg` repo |
-| Monitoring | Prometheus + Grafana + Loki |
-| Secrets | Vault |
+## Production Features
 
-## Project Structure
-
-```
-clab-platform/
-+-- apps/
-|   +-- api-gateway/          # REST facade                :4000
-|   +-- orchestrator/         # Mission planner            :4001
-|   +-- runtime-manager/      # Session state manager      :4002
-|   +-- browser-service/      # Browser automation         :4005
-|   +-- review-service/       # QA / verification          :4006
-|   +-- knowledge-service/    # AKB knowledge layer        :4007
-|   +-- dashboard/            # Next.js operations UI      :3000
-|   +-- worker-claude/        # Claude CLI executor
-|   +-- worker-codex/         # Codex CLI executor
-+-- packages/
-|   +-- domain/               # Entities, enums, state machines
-|   +-- db/                   # Drizzle schema + migrations
-|   +-- events/               # Event envelope + NATS bus
-|   +-- policy/               # RBAC, capabilities, approval gates
-|   +-- engines/              # Shared execution helpers
-|   +-- cmux-adapter/         # Local session adapter
-|   +-- telemetry/            # OTel tracing + metrics + logging
-|   +-- knowledge/            # AKB knowledge layer
-|   +-- mcp-contracts/        # MCP tool contracts
-|   +-- runtime-contracts/    # Runtime interface contracts
-+-- schemas/                  # JSON Schema definitions
-+-- scripts/
-|   +-- setup.sh              # Automated setup script
-+-- infra/
-|   +-- docker/               # Dockerfiles + compose
-|   +-- k8s/                  # Kustomize manifests (base + overlays)
-|   +-- terraform/            # Cloud infrastructure
-|   +-- grafana/              # Dashboards
-|   +-- otel/                 # Collector config
-+-- docs/
-    +-- architecture/
-    +-- adr/
-    +-- runbooks/
-```
+- **Checkpointer**: Remote checkpoint storage via Control Plane HTTP API
+- **Human-in-the-loop**: Interrupt/resume via `/interrupts` API
+- **Streaming**: WebSocket → SSE event streaming to dashboards
+- **Retry/Compensation**: LangGraph RetryPolicy + LLM-based replanning
+- **Long-running Resume**: thread_id based checkpoint recovery
+- **Multi-worker**: Worker registry with capability-based scheduling
+- **Artifact Lineage**: Audit log + artifact tracking
 
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Language | TypeScript (ES2024) |
-| Monorepo | pnpm + Turborepo |
-| API | Hono |
-| ORM | Drizzle |
-| Database | PostgreSQL |
-| Events | NATS JetStream |
-| Dashboard | Next.js 15 + Tailwind v4 |
-| Observability | OpenTelemetry + Grafana |
+| Agent Framework | LangGraph + LangChain |
+| LLM | Claude (Anthropic) / GPT (OpenAI) |
+| Control Plane | FastAPI + WebSocket + SSE |
+| Knowledge Server | Go + chi router |
+| CLI Execution | Claude Code CLI + Codex CLI |
 | Container | Docker |
 | Orchestration | Kubernetes (Kustomize) |
-| GitOps | ArgoCD |
-| AI Agents | Claude Code CLI + OpenAI Codex CLI |
-| Integration | MCP + repo rules + hooks |
-
-## Roles
-
-| Role | Engine | Responsibility |
-|------|--------|---------------|
-| Orchestrator | Claude (main) | Coordination, decisions |
-| Builder | Codex | Coding, tests, bug fixes |
-| Architect | Codex | Technical design |
-| PM | Claude CLI | Task decomposition |
-| Operations-Reviewer | Claude CLI | QA, verification |
-| Strategist | Codex | Strategy analysis |
-| Research-Analyst | Codex | Research, documentation |
+| Domains | control.clab.dev, knowledge.clab.dev |
 
 ## License
 
