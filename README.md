@@ -1,9 +1,9 @@
-# clab-platform — Execution Control Plane for Multi-Agent Orchestration
+# clab-platform -- Execution Control Plane for Multi-Agent Orchestration
 
 Stateful execution control plane where Claude orchestrates Codex/Claude agents through structured missions, waves, and tasks.
 
 ```
-User Request → Mission → Plan → Waves → Tasks → Agent Sessions → Artifacts → Review
+User Request -> Mission -> Plan -> Waves -> Tasks -> Agent Sessions -> Artifacts -> Review
 ```
 
 ## Quick Start
@@ -42,7 +42,7 @@ Install these **before** running `setup.sh`:
 ## What `setup.sh` Does
 
 1. Verifies all prerequisites are installed
-2. `pnpm install` — installs project dependencies
+2. `pnpm install` -- installs project dependencies
 3. Creates `.env`
 4. Prepares the repo for MCP-first operation with `.mcp.json`, `CLAUDE.md`, and `AGENTS.md`
 
@@ -50,17 +50,16 @@ Install these **before** running `setup.sh`:
 
 ```
 Claude / Codex                    clab MCP                      K8s / Host Runtime
-┌──────────────────────┐          ┌────────────────────────┐    ┌─────────────────────┐
-│ CLAUDE.md / AGENTS.md │ ───────→ │ stdio MCP server       │ ─→ │ api-gateway          │
-│ project hooks         │          │ tool routing + policy  │    │ orchestrator         │
-│ local model client    │          │                        │    │ review-service       │
-└──────────────────────┘          └────────────────────────┘    │ knowledge-service    │
-                                                                 │ dashboard / nats / db│
-                                                                 └─────────────────────┘
++----------------------+          +------------------------+    +---------------------+
+| CLAUDE.md / AGENTS.md | -------> | stdio MCP server       | -> | api-gateway          |
+| project hooks         |          | tool routing + policy  |    | orchestrator         |
+| local model client    |          |                        |    | review-service       |
++----------------------+          +------------------------+    | knowledge-service    |
+                                                                 | dashboard / nats / db|
+                                                                 +---------------------+
 ```
 
-- `cmux` and terminal-pane orchestration are not part of the intended runtime path.
-- Claude and Codex should reach the deployed platform through the `clab` MCP server.
+- Claude and Codex reach the deployed platform through the `clab` MCP server.
 - `CLAB_API_URL` is the control-plane entry point.
 - K8s hosts the control plane and data plane; local Claude/Codex clients execute through MCP.
 
@@ -110,43 +109,45 @@ codex
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    api-gateway :4000                     │
-│                REST facade for MCP tools                 │
-├─────────────┬───────────────────────┬───────────────────┤
-│ orchestrator │  runtime-manager     │  review-service   │
-│    :4001    │       :4002           │     :4006         │
-├─────────────┼───────────────────────┼───────────────────┤
-│ knowledge-service :4007             │ dashboard :3000   │
-├─────────────────────────────────────────────────────────┤
-│                PostgreSQL + NATS JetStream              │
-└─────────────────────────────────────────────────────────┘
++----------------------------------------------------------+
+|                    api-gateway :4000                       |
+|                REST facade for MCP tools                  |
++-------------+------------------------+-------------------+
+| orchestrator |  runtime-manager      |  review-service   |
+|    :4001     |       :4002           |     :4006         |
++-------------+------------------------+-------------------+
+| knowledge-service :4007              | dashboard :3000   |
++----------------------------------------------------------+
+|                PostgreSQL + NATS JetStream                |
++----------------------------------------------------------+
 ```
 
 ## Domain Model
 
 ```
 Mission
-  └─ Plan
-      └─ Wave[]
-          └─ Task[]
-              └─ TaskRun[]
-                  └─ AgentSession
-                      └─ Artifact[]
-                      └─ Decision[]
+  +- Plan
+      +- Wave[]
+          +- Task[]
+              +- TaskRun[]
+                  +- AgentSession
+                      +- Artifact[]
+                      +- Decision[]
 ```
 
 ## Services
 
 | Service | Port | Role |
 |---------|------|------|
-| api-gateway | 4000 | External entry point (REST/WS) |
+| api-gateway | 4000 | External entry point (REST) |
 | orchestrator | 4001 | Mission planning, wave scheduling |
 | runtime-manager | 4002 | Session and state tracking |
+| browser-service | 4005 | Browser automation (Playwright) |
 | review-service | 4006 | QA and verification |
 | knowledge-service | 4007 | AKB knowledge layer |
 | dashboard | 3000 | Operations UI |
-| mcp-server | stdio | Claude/Codex integration layer |
+| worker-claude | -- | Claude CLI task executor |
+| worker-codex | -- | Codex CLI task executor |
 
 ## Deployment (K8s / ArgoCD GitOps)
 
@@ -154,14 +155,14 @@ Mission
 
 ```bash
 # Build all service images
-for svc in api-gateway mission-service runtime-manager browser-service review-service knowledge-service; do
-  docker build --build-arg SERVICE=$svc -t clab/$svc:v1 .
+for svc in api-gateway orchestrator runtime-manager browser-service review-service knowledge-service; do
+  docker build --build-arg SERVICE=$svc -t clab/$svc:v3 .
 done
-docker build -f infra/docker/Dockerfile.dashboard -t clab/dashboard:v1 .
+docker build -f infra/docker/Dockerfile.dashboard -t clab/dashboard:v3 .
 
 # Import to k3s containerd (for imagePullPolicy: Never)
-for img in api-gateway mission-service runtime-manager browser-service review-service knowledge-service dashboard; do
-  docker save clab/$img:v1 | ssh user@server ctr images import -
+for img in api-gateway orchestrator runtime-manager browser-service review-service knowledge-service dashboard; do
+  docker save clab/$img:v3 | ssh user@server ctr images import -
 done
 
 # ArgoCD syncs from the k8s-stg repo automatically
@@ -171,15 +172,15 @@ done
 
 ```
 clab-platform (source)          k8s-stg (deployment repo)      K8s Cluster
-┌──────────────────┐           ┌─────────────────────┐        ┌──────────────┐
-│ apps/             │  build   │ workloads/           │  sync  │ ns:           │
-│ packages/         │ ──────→  │   clab-platform/     │ ─────→ │ clab-platform │
-│ infra/k8s/        │  image   │     kustomization.yaml│ ArgoCD│              │
-│ Dockerfile        │          │     services.yaml    │        │ core workloads│
-└──────────────────┘           │     dashboard.yaml   │        └──────────────┘
-                               │     postgres.yaml    │
-                               │     nats.yaml        │
-                               └─────────────────────┘
++------------------+           +---------------------+        +--------------+
+| apps/             |  build   | workloads/           |  sync  | ns:           |
+| packages/         | ------>  |   clab-platform/     | -----> | clab-platform |
+| infra/k8s/        |  image   |     kustomization.yaml| ArgoCD|              |
+| Dockerfile        |          |     services.yaml    |        | core workloads|
++------------------+           |     dashboard.yaml   |        +--------------+
+                               |     postgres.yaml    |
+                               |     nats.yaml        |
+                               +---------------------+
 ```
 
 | Component | Details |
@@ -199,39 +200,40 @@ clab-platform (source)          k8s-stg (deployment repo)      K8s Cluster
 
 ```
 clab-platform/
-├── apps/
-│   ├── api-gateway/          # REST/WS facade            :4000
-│   ├── orchestrator/         # Mission planner           :4001
-│   ├── runtime-manager/      # Session state manager     :4002
-│   ├── browser-service/      # Browser service           :4005
-│   ├── review-service/       # QA / verification         :4006
-│   ├── knowledge-service/    # AKB knowledge layer       :4007
-│   ├── dashboard/            # Next.js operations UI     :3000
-│   └── mcp-server/           # stdio MCP bridge
-├── packages/
-│   ├── domain/               # Entities, enums, state machines
-│   ├── db/                   # Drizzle schema + migrations
-│   ├── events/               # Event envelope + NATS bus
-│   ├── policy/               # RBAC, capabilities, approval gates
-│   ├── artifacts/            # Result artifacts store
-│   ├── prompts/              # Role prompt templates
-│   ├── engines/              # Shared execution helpers
-│   ├── telemetry/            # OTel tracing + metrics + logging
-│   ├── sdk/                  # Internal client SDK
-│   └── knowledge/            # AKB knowledge layer
-├── schemas/                  # JSON Schema definitions
-├── scripts/
-│   └── setup.sh              # Automated setup script
-├── infra/
-│   ├── docker/               # Dockerfiles + compose
-│   ├── k8s/                  # Kustomize manifests (base + overlays)
-│   ├── terraform/            # Cloud infrastructure
-│   ├── grafana/              # Dashboards
-│   └── otel/                 # Collector config
-└── docs/
-    ├── architecture/
-    ├── adr/
-    └── runbooks/
++-- apps/
+|   +-- api-gateway/          # REST facade                :4000
+|   +-- orchestrator/         # Mission planner            :4001
+|   +-- runtime-manager/      # Session state manager      :4002
+|   +-- browser-service/      # Browser automation         :4005
+|   +-- review-service/       # QA / verification          :4006
+|   +-- knowledge-service/    # AKB knowledge layer        :4007
+|   +-- dashboard/            # Next.js operations UI      :3000
+|   +-- worker-claude/        # Claude CLI executor
+|   +-- worker-codex/         # Codex CLI executor
++-- packages/
+|   +-- domain/               # Entities, enums, state machines
+|   +-- db/                   # Drizzle schema + migrations
+|   +-- events/               # Event envelope + NATS bus
+|   +-- policy/               # RBAC, capabilities, approval gates
+|   +-- engines/              # Shared execution helpers
+|   +-- cmux-adapter/         # Local session adapter
+|   +-- telemetry/            # OTel tracing + metrics + logging
+|   +-- knowledge/            # AKB knowledge layer
+|   +-- mcp-contracts/        # MCP tool contracts
+|   +-- runtime-contracts/    # Runtime interface contracts
++-- schemas/                  # JSON Schema definitions
++-- scripts/
+|   +-- setup.sh              # Automated setup script
++-- infra/
+|   +-- docker/               # Dockerfiles + compose
+|   +-- k8s/                  # Kustomize manifests (base + overlays)
+|   +-- terraform/            # Cloud infrastructure
+|   +-- grafana/              # Dashboards
+|   +-- otel/                 # Collector config
++-- docs/
+    +-- architecture/
+    +-- adr/
+    +-- runbooks/
 ```
 
 ## Tech Stack
@@ -256,7 +258,7 @@ clab-platform/
 
 | Role | Engine | Responsibility |
 |------|--------|---------------|
-| Mission-Service | Claude (main) | Coordination, decisions |
+| Orchestrator | Claude (main) | Coordination, decisions |
 | Builder | Codex | Coding, tests, bug fixes |
 | Architect | Codex | Technical design |
 | PM | Claude CLI | Task decomposition |

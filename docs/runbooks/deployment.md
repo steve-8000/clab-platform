@@ -8,13 +8,13 @@ Before deploying clab-platform, ensure the following are available:
 
 - **Kubernetes cluster** (v1.28+) with `kubectl` configured
 - **Container registry** (Docker Hub, GitHub Container Registry, or private registry)
-- **PostgreSQL** (v15+) — managed service recommended (AWS RDS, Neon, Supabase)
+- **PostgreSQL** (v15+) -- managed service recommended (AWS RDS, Neon, Supabase)
 - **NATS** (v2.10+) with JetStream enabled
 - **Domain/Ingress** configured for API gateway and dashboard
 
 ### Local Tools
 
-- Node.js v20+
+- Node.js v22+
 - pnpm v9+
 - Docker v24+
 - `kubectl` configured for the target cluster
@@ -30,26 +30,27 @@ DATABASE_URL=postgresql://user:pass@host:5432/clab
 NATS_URL=nats://nats:4222
 
 # API Gateway
-API_PORT=3000
-JWT_SECRET=<generate-a-secure-secret>
-DASHBOARD_ORIGIN=https://dashboard.example.com
+API_PORT=4000
+CORS_ORIGINS=https://dashboard.example.com
 
-# Mission Service
-MISSION_SERVICE_PORT=3001
+# Orchestrator
+ORCHESTRATOR_PORT=4001
 PLANNING_MODEL=claude-sonnet-4-20250514
 
 # Runtime Manager
-RUNTIME_MANAGER_PORT=3002
+RUNTIME_MANAGER_PORT=4002
 MAX_CONCURRENT_WORKERS=8
-WORKER_HEARTBEAT_TIMEOUT_MS=30000
 
 # Browser Service
-BROWSER_SERVICE_PORT=3003
+BROWSER_SERVICE_PORT=4005
 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # Review Service
-REVIEW_SERVICE_PORT=3004
+REVIEW_SERVICE_PORT=4006
 REVIEW_MODEL=claude-sonnet-4-20250514
+
+# Knowledge Service
+KNOWLEDGE_SERVICE_PORT=4007
 ```
 
 ## Build and Push Images
@@ -71,7 +72,7 @@ Each app has its own Dockerfile. Build from the repo root (monorepo context):
 REGISTRY=ghcr.io/your-org/clab-platform
 
 # Build all service images
-for service in api-gateway orchestrator runtime-manager browser-service review-service dashboard; do
+for service in api-gateway orchestrator runtime-manager browser-service review-service knowledge-service; do
   docker build \
     -f apps/${service}/Dockerfile \
     -t ${REGISTRY}/${service}:$(git rev-parse --short HEAD) \
@@ -83,7 +84,7 @@ done
 ### 3. Push images
 
 ```bash
-for service in api-gateway orchestrator runtime-manager browser-service review-service dashboard; do
+for service in api-gateway orchestrator runtime-manager browser-service review-service knowledge-service; do
   docker push ${REGISTRY}/${service}:$(git rev-parse --short HEAD)
   docker push ${REGISTRY}/${service}:latest
 done
@@ -115,8 +116,7 @@ helm install nats nats/nats \
 kubectl create secret generic clab-secrets \
   --namespace clab-platform \
   --from-literal=DATABASE_URL='postgresql://user:pass@host:5432/clab' \
-  --from-literal=NATS_URL='nats://nats:4222' \
-  --from-literal=JWT_SECRET='your-jwt-secret'
+  --from-literal=NATS_URL='nats://nats:4222'
 ```
 
 ### 4. Apply Kubernetes manifests
@@ -173,27 +173,28 @@ Each service exposes a `GET /health` endpoint:
 
 ```bash
 # Port-forward the API gateway
-kubectl port-forward svc/api-gateway 3000:3000 -n clab-platform
+kubectl port-forward svc/api-gateway 4000:4000 -n clab-platform
 
 # Check individual service health
-curl http://localhost:3000/health
-# Expected: {"status":"ok","version":"...","uptime":...}
+curl http://localhost:4000/health
+# Expected: {"status":"ok","service":"api-gateway"}
 
 # Check aggregated health (gateway checks all downstream services)
-curl http://localhost:3000/health/all
-# Expected: {"api-gateway":"ok","orchestrator":"ok","runtime-manager":"ok",...}
+curl http://localhost:4000/v1/health/all
+# Expected: {"status":"ok","services":{"orchestrator":"ok","runtime-manager":"ok",...}}
 ```
 
 ### Health check details
 
-| Service          | Endpoint     | Checks                                    |
-| ---------------- | ------------ | ----------------------------------------- |
-| API Gateway      | `/health`    | Self, downstream service connectivity     |
-| Mission Service     | `/health`    | Self, DB connection, NATS connection       |
-| Runtime Manager  | `/health`    | Self, DB connection, NATS connection       |
-| Browser Service  | `/health`    | Self, Playwright browser launch            |
-| Review Service   | `/health`    | Self, DB connection                        |
-| Dashboard        | `/health`    | Self (static assets served)                |
+| Service           | Endpoint  | Checks                                    |
+| ----------------- | --------- | ----------------------------------------- |
+| API Gateway       | `/health` | Self, downstream service connectivity     |
+| Orchestrator      | `/health` | Self, DB connection, NATS connection      |
+| Runtime Manager   | `/health` | Self, DB connection, heartbeat monitor    |
+| Browser Service   | `/health` | Self, Playwright browser launch           |
+| Review Service    | `/health` | Self, DB connection                       |
+| Knowledge Service | `/health` | Self, knowledge store status              |
+| Dashboard         | `/health` | Self (Next.js app health)                 |
 
 ## Rollback Procedure
 
@@ -249,7 +250,7 @@ If the entire release needs to be reverted:
 
 ```bash
 # Roll back all deployments
-for deploy in api-gateway orchestrator runtime-manager browser-service review-service dashboard; do
+for deploy in api-gateway orchestrator runtime-manager browser-service review-service knowledge-service dashboard; do
   kubectl rollout undo deployment/${deploy} -n clab-platform
 done
 

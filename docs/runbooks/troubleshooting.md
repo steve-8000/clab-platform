@@ -4,12 +4,28 @@
 
 | Symptom                          | Likely Cause                    | Jump To                        |
 | -------------------------------- | ------------------------------- | ------------------------------ |
-| Tasks stuck in `DISPATCHED`      | Worker session stale/dead       | [Session Stale](#session-stale)|
+| Tasks stuck in `ASSIGNED`        | Worker session stale/dead       | [Session Stale](#session-stale)|
 | Tasks timing out                 | Worker hung or slow             | [Task Timeout](#task-timeout)  |
 | Services can't start             | DB connection failure           | [DB Connection](#db-connection-issues) |
 | Events not flowing               | NATS disconnected               | [NATS Disconnection](#nats-disconnection) |
-| Mission stuck in `EXECUTING`     | Wave not completing             | [Mission Failure Recovery](#mission-failure-recovery) |
-| Dashboard shows no data          | WebSocket or API gateway issue  | [Dashboard Issues](#dashboard-issues) |
+| Mission stuck in `RUNNING`       | Wave not completing             | [Mission Failure Recovery](#mission-failure-recovery) |
+| Dashboard shows no data          | API gateway or polling issue    | [Dashboard Issues](#dashboard-issues) |
+
+## Status Reference
+
+### Mission Status
+
+`DRAFT` -> `PLANNED` -> `RUNNING` -> `REVIEWING` -> `COMPLETED` | `FAILED` | `ABORTED`
+
+### Task Status
+
+`QUEUED` -> `ASSIGNED` -> `RUNNING` -> `NEEDS_REVIEW` -> `SUCCEEDED` | `FAILED` | `BLOCKED` | `CANCELLED`
+
+### Session State
+
+`IDLE` -> `BOUND` -> `RUNNING` -> `IDLE` (reuse) | `CLOSED`
+
+Degraded states: `STALE` -> `LOST`
 
 ## How to Check Logs
 
@@ -50,12 +66,12 @@ pnpm dev 2>&1 | pnpm pino-pretty
 
 All services respect the `LOG_LEVEL` environment variable:
 
-- `fatal` — Unrecoverable errors
-- `error` — Errors that affect functionality
-- `warn` — Unexpected conditions that are handled
-- `info` — Normal operational messages (default)
-- `debug` — Detailed diagnostic information
-- `trace` — Very verbose, includes request/response bodies
+- `fatal` -- Unrecoverable errors
+- `error` -- Errors that affect functionality
+- `warn` -- Unexpected conditions that are handled
+- `info` -- Normal operational messages (default)
+- `debug` -- Detailed diagnostic information
+- `trace` -- Very verbose, includes request/response bodies
 
 ```bash
 # Temporarily increase log level for a deployment
@@ -69,57 +85,68 @@ kubectl set env deployment/orchestrator LOG_LEVEL=debug -n clab-platform
 ### Session Stale
 
 **Symptoms:**
-- Tasks stuck in `DISPATCHED` or `RUNNING` status
-- Runtime manager logs show `session stale: no heartbeat for >30s`
-- Worker pane in tmux is unresponsive or shows an error
+- Tasks stuck in `ASSIGNED` or `RUNNING` status
+- Runtime manager logs show `Session <id> STALE`
+- Worker process is unresponsive or has exited
 
 **Diagnosis:**
 
 ```bash
 # Check session status in the database
 psql $DATABASE_URL -c "
-  SELECT id, worker_id, pane_id, status, last_heartbeat,
+  SELECT id, role, engine, state, last_heartbeat,
          NOW() - last_heartbeat AS heartbeat_age
   FROM agent_sessions
-  WHERE status NOT IN ('TERMINATED')
+  WHERE state NOT IN ('CLOSED')
   ORDER BY last_heartbeat DESC;
 "
-
-# Check if the tmux pane still exists
-# (from a machine with tmux access)
-tmux list-panes -a | grep <pane_id>
 
 # Check runtime-manager logs for heartbeat failures
 kubectl logs -l app=runtime-manager -n clab-platform | grep "heartbeat"
 ```
 
+**How the heartbeat monitor works:**
+
+The runtime manager runs a heartbeat check loop with these parameters:
+- **Check interval**: 30 seconds
+- **Stale threshold**: 2 minutes without heartbeat -> session marked `STALE`
+- **Lost threshold**: 5 minutes in `STALE` state -> session marked `CLOSED`, associated tasks re-queued
+
 **Resolution:**
 
-1. **Automatic recovery**: The runtime manager's stale-session reaper runs every 15 seconds. It marks stale sessions as `TERMINATED` and re-queues their tasks. Wait 30-60 seconds to see if it recovers.
+1. **Automatic recovery**: The runtime manager's heartbeat monitor runs every 30 seconds. Sessions without a heartbeat for 2 minutes are marked `STALE`. After 5 minutes in `STALE` state, sessions are `CLOSED` and their tasks are re-queued. Wait up to 5 minutes for automatic recovery.
 
-2. **Manual session cleanup**:
+2. **Manual session cleanup** (via MCP tool -- preferred):
+   ```
+   Use the `mission_abort` MCP tool to abort the mission, which will
+   close all associated sessions and cancel pending tasks.
+   ```
+
+3. **Manual session cleanup** (via API):
    ```bash
-   # Mark session as terminated
+   # Abort the mission via API
+   curl -X POST http://localhost:4000/v1/missions/<mission-id>/abort \
+     -H "Content-Type: application/json"
+   ```
+
+4. **Manual database cleanup** (last resort):
+   ```bash
+   # Mark session as closed
    psql $DATABASE_URL -c "
-     UPDATE agent_sessions SET status = 'TERMINATED', updated_at = NOW()
+     UPDATE agent_sessions SET state = 'CLOSED', closed_at = NOW()
      WHERE id = '<session-id>';
    "
 
-   # Reset the task to PENDING so it gets re-dispatched
+   # Reset the task to QUEUED so it gets re-assigned
    psql $DATABASE_URL -c "
-     UPDATE tasks SET status = 'PENDING', updated_at = NOW()
-     WHERE id = '<task-id>' AND status IN ('DISPATCHED', 'RUNNING');
+     UPDATE tasks SET status = 'QUEUED', updated_at = NOW()
+     WHERE id = '<task-id>' AND status IN ('ASSIGNED', 'RUNNING');
    "
    ```
 
-3. **Kill the stuck tmux pane** (if applicable):
-   ```bash
-   tmux kill-pane -t <pane_id>
-   ```
-
 **Prevention:**
-- Ensure `WORKER_HEARTBEAT_TIMEOUT_MS` is set appropriately (default: 30000).
-- Monitor the `session.heartbeat` NATS subject for gaps.
+- Monitor the heartbeat log output for early warnings of stale sessions.
+- Ensure workers are correctly sending heartbeats to the runtime manager.
 
 ---
 
@@ -135,9 +162,9 @@ kubectl logs -l app=runtime-manager -n clab-platform | grep "heartbeat"
 ```bash
 # Check the task's timeout configuration and run history
 psql $DATABASE_URL -c "
-  SELECT t.id, t.title, t.timeout_seconds, t.max_retries,
-         tr.attempt, tr.status, tr.started_at, tr.completed_at,
-         tr.completed_at - tr.started_at AS duration
+  SELECT t.id, t.title, t.timeout_ms, t.max_retries,
+         tr.attempt, tr.status, tr.started_at, tr.finished_at,
+         tr.finished_at - tr.started_at AS duration
   FROM tasks t
   JOIN task_runs tr ON tr.task_id = t.id
   WHERE t.id = '<task-id>'
@@ -153,39 +180,39 @@ kubectl logs -l app=runtime-manager -n clab-platform | grep "<task-id>"
 1. **If the task is legitimately slow**, increase its timeout:
    ```bash
    psql $DATABASE_URL -c "
-     UPDATE tasks SET timeout_seconds = 600, updated_at = NOW()
+     UPDATE tasks SET timeout_ms = 600000, updated_at = NOW()
      WHERE id = '<task-id>';
    "
    ```
-   Then retry the task (see [How to Manually Retry Tasks](#how-to-manually-retry-tasks)).
+   Then retry the task (see [How to Retry Tasks](#how-to-retry-tasks)).
 
-2. **If the worker is hung**, kill the session and let the task be re-dispatched:
+2. **If the worker is hung**, close the session and let the task be re-assigned:
    ```bash
    # Find the session
    psql $DATABASE_URL -c "
-     SELECT s.id, s.pane_id FROM agent_sessions s
+     SELECT s.id, s.role, s.engine FROM agent_sessions s
      JOIN task_runs tr ON tr.session_id = s.id
      WHERE tr.task_id = '<task-id>'
      ORDER BY tr.attempt DESC LIMIT 1;
    "
-   # Terminate it
+   # Close it
    psql $DATABASE_URL -c "
-     UPDATE agent_sessions SET status = 'TERMINATED' WHERE id = '<session-id>';
+     UPDATE agent_sessions SET state = 'CLOSED', closed_at = NOW()
+     WHERE id = '<session-id>';
    "
    ```
 
-3. **If the task spec is flawed** (e.g., impossible acceptance criteria), update the spec or skip the task:
+3. **If the task spec is flawed** (e.g., impossible acceptance criteria), cancel the task:
    ```bash
-   # Skip the task
    psql $DATABASE_URL -c "
-     UPDATE tasks SET status = 'SKIPPED', updated_at = NOW()
+     UPDATE tasks SET status = 'CANCELLED', updated_at = NOW()
      WHERE id = '<task-id>';
    "
    ```
 
 **Prevention:**
-- Set realistic `timeout_seconds` based on task complexity.
-- Use the `BROWSER` task type for web interactions (they have longer default timeouts).
+- Set realistic `timeout_ms` based on task complexity (default: 300000 = 5 min).
+- Use the `BROWSER` engine type for web interactions (they typically need longer timeouts).
 
 ---
 
@@ -205,9 +232,6 @@ kubectl run pg-check --rm -it --image=postgres:15 -n clab-platform -- \
 
 # Check the database service/endpoint
 kubectl get endpoints -n clab-platform | grep postgres
-
-# Check connection pool status (if using pgBouncer)
-psql $DATABASE_URL -c "SHOW pool_size;" 2>/dev/null
 
 # Check for too many connections
 psql $DATABASE_URL -c "
@@ -313,7 +337,7 @@ kubectl logs -l app=nats -n clab-platform --tail=50
 **Prevention:**
 - Monitor NATS JetStream storage usage.
 - Set appropriate retention policies (time-based, not unlimited).
-- The `packages/nats-client` has built-in reconnection with exponential backoff.
+- The `packages/events` package has built-in reconnection with exponential backoff.
 
 ---
 
@@ -321,8 +345,8 @@ kubectl logs -l app=nats -n clab-platform --tail=50
 
 **Symptoms:**
 - Dashboard loads but shows no missions or stale data
-- WebSocket connection fails (browser console shows `WebSocket connection to 'wss://...' failed`)
 - Dashboard shows a loading spinner indefinitely
+- Data appears outdated (not refreshing)
 
 **Diagnosis:**
 
@@ -330,62 +354,68 @@ kubectl logs -l app=nats -n clab-platform --tail=50
 # Check if the dashboard pod is running
 kubectl get pods -l app=dashboard -n clab-platform
 
-# Check if the API gateway WebSocket endpoint is reachable
-kubectl port-forward svc/api-gateway 3000:3000 -n clab-platform
-# Then in another terminal:
-curl -i -N \
-  -H "Connection: Upgrade" \
-  -H "Upgrade: websocket" \
-  -H "Sec-WebSocket-Version: 13" \
-  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-  http://localhost:3000/ws
+# Check if the API gateway is reachable
+kubectl port-forward svc/api-gateway 4000:4000 -n clab-platform
+
+# Test the dashboard aggregate endpoint directly
+curl http://localhost:4000/v1/dashboard
 
 # Check CORS configuration
-curl -I -X OPTIONS http://localhost:3000/ws \
+curl -I -X OPTIONS http://localhost:4000/v1/dashboard \
   -H "Origin: https://dashboard.example.com"
 ```
 
+**How the dashboard works:**
+
+The dashboard uses **5-second polling** against the API gateway's `/v1/dashboard` aggregate endpoint. There is no WebSocket connection. The API gateway fetches data from the orchestrator, runtime-manager, and knowledge-service, then returns a combined response.
+
 **Resolution:**
 
-1. **CORS issue**: Ensure `DASHBOARD_ORIGIN` in the API gateway matches the dashboard URL.
+1. **CORS issue**: Ensure `CORS_ORIGINS` in the API gateway env var includes the dashboard URL.
 
-2. **WebSocket ingress**: Ensure the ingress controller supports WebSocket upgrades:
-   ```yaml
-   # In ingress annotation (nginx)
-   nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-   nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-   nginx.ingress.kubernetes.io/websocket-services: "api-gateway"
-   ```
-
-3. **API gateway not forwarding events**: Restart it:
+2. **API gateway not responding**: Restart it:
    ```bash
    kubectl rollout restart deployment/api-gateway -n clab-platform
    ```
 
+3. **Downstream service unavailable**: The dashboard endpoint aggregates data from multiple services. If one is down, partial data is returned. Check which service is failing:
+   ```bash
+   curl http://localhost:4000/v1/health/all
+   ```
+
+4. **Dashboard pod itself is unhealthy**: Restart it:
+   ```bash
+   kubectl rollout restart deployment/dashboard -n clab-platform
+   ```
+
 ---
 
-## How to Manually Retry Tasks
+## How to Retry Tasks
 
 ### Via API
 
 ```bash
 # Retry a specific task
-curl -X POST http://localhost:3000/api/tasks/<task-id>/retry \
-  -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:4000/v1/missions/<mission-id>/tasks/<task-id>/retry \
+  -H "Content-Type: application/json"
 ```
 
-### Via Database
+### Via MCP Tool (preferred)
+
+Use the `mission_abort` tool to abort a stuck mission, or `approval_resolve` to resolve a pending approval that is blocking progress.
+
+### Via Database (last resort)
 
 ```bash
-# Reset task status to PENDING
+# Reset task status to QUEUED
 psql $DATABASE_URL -c "
   UPDATE tasks
-  SET status = 'PENDING', updated_at = NOW()
+  SET status = 'QUEUED', updated_at = NOW()
   WHERE id = '<task-id>';
 "
 
 # Notify the orchestrator (via NATS or by restarting it)
-# The orchestrator's wave monitor will pick up the pending task
+# The orchestrator's wave monitor will pick up the queued task
 ```
 
 ### Retry all failed tasks in a wave
@@ -393,7 +423,7 @@ psql $DATABASE_URL -c "
 ```bash
 psql $DATABASE_URL -c "
   UPDATE tasks
-  SET status = 'PENDING', updated_at = NOW()
+  SET status = 'QUEUED', updated_at = NOW()
   WHERE wave_id = '<wave-id>'
     AND status = 'FAILED';
 
@@ -413,14 +443,14 @@ psql $DATABASE_URL -c "
 # Get mission status and its waves/tasks
 psql $DATABASE_URL -c "
   SELECT m.id, m.title, m.status,
-         w.order AS wave_order, w.status AS wave_status,
-         t.title AS task_title, t.status AS task_status, t.type
+         w.ordinal AS wave_order, w.status AS wave_status,
+         t.title AS task_title, t.status AS task_status, t.role, t.engine
   FROM missions m
   JOIN plans p ON p.mission_id = m.id
   JOIN waves w ON w.plan_id = p.id
   JOIN tasks t ON t.wave_id = w.id
   WHERE m.id = '<mission-id>'
-  ORDER BY w.order, t.priority DESC;
+  ORDER BY w.ordinal, t.title;
 "
 ```
 
@@ -433,7 +463,7 @@ If specific tasks failed but the plan is sound:
 psql $DATABASE_URL -c "
   BEGIN;
 
-  UPDATE tasks SET status = 'PENDING', updated_at = NOW()
+  UPDATE tasks SET status = 'QUEUED', updated_at = NOW()
   WHERE wave_id IN (
     SELECT w.id FROM waves w
     JOIN plans p ON p.id = w.plan_id
@@ -447,7 +477,7 @@ psql $DATABASE_URL -c "
     WHERE p.mission_id = '<mission-id>'
   ) AND status = 'FAILED';
 
-  UPDATE missions SET status = 'EXECUTING', updated_at = NOW()
+  UPDATE missions SET status = 'RUNNING', updated_at = NOW()
   WHERE id = '<mission-id>';
 
   COMMIT;
@@ -459,53 +489,49 @@ psql $DATABASE_URL -c "
 If the plan itself was flawed:
 
 ```bash
-# Reset mission to PLANNING status
+# Reset mission to PLANNED status
 # The orchestrator will generate a new plan
 psql $DATABASE_URL -c "
-  UPDATE missions SET status = 'PLANNING', updated_at = NOW()
+  UPDATE missions SET status = 'PLANNED', updated_at = NOW()
   WHERE id = '<mission-id>';
 "
 ```
 
-### Option 3: Cancel the mission
+### Option 3: Abort the mission
 
 If the mission should be abandoned:
 
 ```bash
+# Via MCP tool (preferred)
+# Use the mission_abort tool
+
+# Via API
+curl -X POST http://localhost:4000/v1/missions/<mission-id>/abort \
+  -H "Content-Type: application/json"
+
+# Via database (last resort)
 psql $DATABASE_URL -c "
   BEGIN;
 
   -- Cancel all non-terminal tasks
-  UPDATE tasks SET status = 'SKIPPED', updated_at = NOW()
+  UPDATE tasks SET status = 'CANCELLED', updated_at = NOW()
   WHERE wave_id IN (
     SELECT w.id FROM waves w
     JOIN plans p ON p.id = w.plan_id
     WHERE p.mission_id = '<mission-id>'
-  ) AND status NOT IN ('COMPLETED', 'FAILED', 'SKIPPED');
+  ) AND status NOT IN ('SUCCEEDED', 'FAILED', 'CANCELLED');
 
-  -- Terminate active sessions
-  UPDATE agent_sessions SET status = 'TERMINATED', updated_at = NOW()
-  WHERE mission_id = '<mission-id>'
-    AND status NOT IN ('TERMINATED');
+  -- Close active sessions
+  UPDATE agent_sessions SET state = 'CLOSED', closed_at = NOW()
+  WHERE workspace_id = (SELECT workspace_id FROM missions WHERE id = '<mission-id>')
+    AND state NOT IN ('CLOSED');
 
-  -- Mark mission as cancelled
-  UPDATE missions SET status = 'CANCELLED', updated_at = NOW(), completed_at = NOW()
+  -- Mark mission as aborted
+  UPDATE missions SET status = 'ABORTED', updated_at = NOW(), completed_at = NOW()
   WHERE id = '<mission-id>';
 
   COMMIT;
 "
-```
-
-### Option 4: Via API (preferred)
-
-```bash
-# Retry mission
-curl -X POST http://localhost:3000/api/missions/<mission-id>/retry \
-  -H "Authorization: Bearer <token>"
-
-# Cancel mission
-curl -X POST http://localhost:3000/api/missions/<mission-id>/cancel \
-  -H "Authorization: Bearer <token>"
 ```
 
 ---
