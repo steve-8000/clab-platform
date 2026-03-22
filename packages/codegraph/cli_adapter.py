@@ -94,8 +94,7 @@ class CgcCliEngineAdapter(CodeIntelEngine):
         # CGC outputs Rich tables to stderr; combine both streams
         combined = stdout
         if stderr:
-            combined = f"{stdout}
-{stderr}" if stdout else stderr
+            combined = (stdout + chr(10) + stderr) if stdout else stderr
         return combined
 
     @staticmethod
