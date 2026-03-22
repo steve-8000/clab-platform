@@ -24,7 +24,13 @@ class CmuxError(Exception):
 
 
 class CmuxClient:
-    """Async client for the cmux v2 JSON-RPC socket API."""
+    """Async wrapper for the cmux v2 JSON-RPC socket API.
+
+    Use `connect()` and `disconnect()` to manage the socket connection and
+    `request()` for raw RPC calls. Higher-level helpers cover workspace and
+    surface management, terminal I/O (`send_text()`, `read_text()`), and
+    browser actions such as `browser_open()` and `browser_snapshot()`.
+    """
 
     def __init__(self) -> None:
         self._reader: asyncio.StreamReader | None = None
@@ -117,7 +123,7 @@ class CmuxClient:
 
     # ---- Workspace ----
     async def workspace_create(self, name: str = "") -> dict:
-        params = {"name": name} if name else {}
+        params = {"title": name} if name else {}
         return await self.request("workspace.create", params)
 
     async def workspace_list(self) -> list[dict]:
@@ -131,7 +137,7 @@ class CmuxClient:
         return await self.request("workspace.current")
 
     async def workspace_rename(self, name: str, workspace_id: str | None = None) -> None:
-        params = {"name": name}
+        params = {"title": name}
         if workspace_id:
             params["workspace_id"] = workspace_id
         await self.request("workspace.rename", params)
@@ -237,3 +243,6 @@ class CmuxClient:
 
     async def ping(self) -> dict:
         return await self.request("system.ping")
+
+# tested
+# workspace naming test
