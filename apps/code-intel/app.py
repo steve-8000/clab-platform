@@ -310,7 +310,7 @@ async def get_repo_summary(repo_id: str):
                 "total_files": stats.file_count,
                 "total_symbols": stats.function_count,
                 "total_relations": 0,
-                "languages": stats.languages,
+                "languages": {lang: 1 for lang in stats.languages} if isinstance(stats.languages, list) else stats.languages,
                 "top_complexity": [],
             }
         except Exception as exc:
