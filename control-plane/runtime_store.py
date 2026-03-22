@@ -56,7 +56,6 @@ class RuntimeStore:
           created_at TIMESTAMPTZ NOT NULL,
           updated_at TIMESTAMPTZ NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_runs_thread_created ON runs(thread_id, created_at DESC);
 
         CREATE TABLE IF NOT EXISTS run_events (
           id TEXT PRIMARY KEY,
@@ -67,8 +66,6 @@ class RuntimeStore:
           payload JSONB NOT NULL DEFAULT '{}'::jsonb,
           ts TIMESTAMPTZ NOT NULL
         );
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_run_events_thread_seq ON run_events(thread_id, seq);
-        CREATE INDEX IF NOT EXISTS idx_run_events_thread_ts ON run_events(thread_id, ts DESC);
 
         CREATE TABLE IF NOT EXISTS checkpoints (
           id TEXT PRIMARY KEY,
@@ -80,7 +77,6 @@ class RuntimeStore:
           metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
           created_at TIMESTAMPTZ NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_created ON checkpoints(thread_id, created_at DESC);
 
         CREATE TABLE IF NOT EXISTS interrupts (
           id TEXT PRIMARY KEY,
@@ -92,7 +88,6 @@ class RuntimeStore:
           created_at TIMESTAMPTZ NOT NULL,
           resolved_at TIMESTAMPTZ
         );
-        CREATE INDEX IF NOT EXISTS idx_interrupts_thread_created ON interrupts(thread_id, created_at DESC);
 
         CREATE TABLE IF NOT EXISTS artifacts (
           id TEXT PRIMARY KEY,
@@ -104,7 +99,6 @@ class RuntimeStore:
           metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
           created_at TIMESTAMPTZ NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_artifacts_thread_created ON artifacts(thread_id, created_at DESC);
 
         -- Compatibility migration for pre-existing tables in shared databases.
         ALTER TABLE IF EXISTS threads
@@ -157,6 +151,14 @@ class RuntimeStore:
           ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '',
           ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
           ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+
+        -- Indexes after compatibility migration (to avoid missing-column failures).
+        CREATE INDEX IF NOT EXISTS idx_runs_thread_created ON runs(thread_id, created_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_run_events_thread_seq ON run_events(thread_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_run_events_thread_ts ON run_events(thread_id, ts DESC);
+        CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_created ON checkpoints(thread_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_interrupts_thread_created ON interrupts(thread_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_artifacts_thread_created ON artifacts(thread_id, created_at DESC);
         """
         with self._connect() as conn:
             with conn.cursor() as cur:
