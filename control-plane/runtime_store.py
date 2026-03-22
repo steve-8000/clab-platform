@@ -283,8 +283,7 @@ class RuntimeStore:
                 """
                 SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq
                 FROM run_events
-                WHERE thread_id=%s
-                FOR UPDATE;
+                WHERE thread_id=%s;
                 """,
                 (thread_id,),
             )
