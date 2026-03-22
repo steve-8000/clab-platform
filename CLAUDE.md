@@ -91,17 +91,46 @@ index:notification_id | workspace_id | surface_id | status | title | subtitle | 
 
 Codex completion:  title="Codex", subtitle="", body=""
 Claude completion:  title="Claude Code", subtitle="Completed in {project}", body="completion message"
+
+Fields: index:notification_id | workspace_id | surface_id | status | title | subtitle | body
+- surface_id (field 3) is the key for filtering — match against the surface you dispatched to
+- status can be "unread" or "read" (user viewing workspace) — do NOT filter by status
 ```
 
 ### Polling pattern (orchestrator)
 ```bash
-# Poll every 2s until notification appears
-for i in $(seq 1 150); do
-  sleep 2
+# 1. Clear stale notifications BEFORE injecting command
+cmux clear-notifications 2>&1 > /dev/null
+
+# 2. Inject command to codex surface
+cmux send --workspace $WS --surface $SURFACE "$INSTRUCTION"
+sleep 1
+cmux send-key --workspace $WS --surface $SURFACE "enter"
+
+# 3. Wait for codex to start processing (avoid stale notification false positives)
+sleep 15
+
+# 4. Clear again (catches codex startup notifications)
+cmux clear-notifications 2>&1 > /dev/null
+
+# 5. Poll for completion notification from OUR surface
+for i in $(seq 1 120); do
+  sleep 4
   notifs=$(cmux list-notifications 2>&1)
-  [ "$notifs" != "No notifications" ] && break
+  if echo "$notifs" | grep -q "$SURFACE_UUID"; then
+    echo "DONE"; cmux clear-notifications 2>&1 > /dev/null; break
+  fi
+  # Fallback: any Codex notification (less precise)
+  if echo "$notifs" | grep -q "Codex"; then
+    echo "DONE (fallback)"; cmux clear-notifications 2>&1 > /dev/null; break
+  fi
 done
 ```
+**Key rules:**
+- Always `clear-notifications` before injecting commands
+- Wait ≥15s after injection before polling (codex startup takes time)
+- Filter by surface UUID when possible (field 3 in pipe-delimited output)
+- Notification status may be `read` (user viewing) or `unread` — filter by surface_id, not status
 
 ### Alternatives
 - `tail -f logfile | grep -m1 "Completed:"` — log-based detection
