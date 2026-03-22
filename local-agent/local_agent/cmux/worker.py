@@ -21,6 +21,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .client import CmuxClient
@@ -34,17 +35,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _get_git_diff(workdir: str) -> str:
-    """Get git diff of unstaged + staged changes in the working directory."""
+async def _get_git_diff(workdir: str, files: list[str] | None = None) -> str:
+    """Get git diff scoped to specific files (or full working tree if none specified)."""
     import subprocess
+
     try:
+        cmd = ["git", "diff", "HEAD"]
+        if files:
+            cmd.append("--")
+            cmd.extend(files)
         result = subprocess.run(
-            ["git", "diff", "HEAD"],
+            cmd,
             capture_output=True, text=True, timeout=10, cwd=workdir,
         )
         diff = result.stdout.strip()
-        if not diff:
-            # Try just unstaged
+        if not diff and not files:
             result = subprocess.run(
                 ["git", "diff"],
                 capture_output=True, text=True, timeout=10, cwd=workdir,
@@ -228,6 +233,8 @@ class ReviewLoop:
     """
 
     MAX_FIX_ROUNDS = 2
+    _DESCRIPTION_LIMIT = 200
+    _PROMPT_FILE_RE = re.compile(r"Execute the instructions in (\S+?\.md) now", re.IGNORECASE)
 
     def __init__(self, reviewer_worker: Worker, workdir: str = "") -> None:
         self.reviewer = reviewer_worker
@@ -293,15 +300,42 @@ class ReviewLoop:
     def _build_review_prompt(self, task: dict, output: str, git_diff: str = "") -> str:
         review_content = git_diff if git_diff and git_diff != "(no changes detected)" else output[-1500:]
         truncated = review_content[-2000:] if len(review_content) > 2000 else review_content
+        description = self._summarize_task_description(task.get("description", ""))
         return (
             f"Review this task completion.\n\n"
             f"Task: {task.get('title', '')}\n"
-            f"Description: {task.get('description', '')[:200]}\n\n"
+            f"Description: {description}\n\n"
             f"Changes:\n---\n{truncated}\n---\n\n"
-            f"Respond with APPROVED if the changes address the task goal.\n"
-            f"Respond with FIX: <instructions> ONLY if there is a clear bug or missing requirement.\n"
+            f"Respond with APPROVED if the task goal was addressed by the changes.\n"
+            f"IGNORE any unrelated changes in the diff — only judge the task-specific work.\n"
+            f"Respond with FIX: <instructions> ONLY if the task-specific changes have a clear bug.\n"
             f"When in doubt, respond APPROVED."
         )
+
+    def _summarize_task_description(self, description: str) -> str:
+        text = description.strip()
+        prompt_path = self._extract_prompt_path(text)
+        if prompt_path:
+            prompt_excerpt = self._read_prompt_excerpt(prompt_path)
+            if prompt_excerpt:
+                text = f"Prompt file {prompt_path}: {prompt_excerpt}"
+        normalized = " ".join(text.split())
+        if len(normalized) <= self._DESCRIPTION_LIMIT:
+            return normalized
+        return normalized[: self._DESCRIPTION_LIMIT - 3].rstrip() + "..."
+
+    def _extract_prompt_path(self, description: str) -> str | None:
+        match = self._PROMPT_FILE_RE.search(description)
+        if not match:
+            return None
+        return match.group(1)
+
+    def _read_prompt_excerpt(self, prompt_path: str) -> str:
+        try:
+            content = Path(prompt_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return ""
+        return content.strip()
 
     def _parse_review_result(self, output: str, task_id: str) -> ReviewResult:
         tail = output[-1500:].strip()
