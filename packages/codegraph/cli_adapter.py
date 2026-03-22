@@ -112,6 +112,35 @@ class CgcCliEngineAdapter(CodeIntelEngine):
         cleaned = cleaned.replace("╞", "|")
         return cleaned
 
+    @staticmethod
+    def _merge_rich_rows(output: str) -> list[str]:
+        """Merge multiline Rich table rows into single lines.
+        
+        CGC wraps long cell values across multiple lines. Continuation
+        lines start with │ and have empty first columns.
+        """
+        cleaned_lines: list[str] = []
+        for line in output.splitlines():
+            cleaned = CgcCliEngineAdapter._clean_rich(line).strip()
+            if not cleaned:
+                continue
+            # Detect continuation row: starts with | and first column is empty
+            parts = [p.strip() for p in cleaned.split("|") if p.strip() != ""]
+            # Check if this looks like a continuation (empty first cell)
+            raw_parts = cleaned.split("|")
+            is_continuation = (
+                len(raw_parts) >= 3
+                and raw_parts[0].strip() == ""
+                and raw_parts[1].strip() == ""
+                and cleaned_lines
+            )
+            if is_continuation and cleaned_lines:
+                # Append content to previous line
+                cleaned_lines[-1] = cleaned_lines[-1].rstrip() + " " + " ".join(p.strip() for p in raw_parts[2:] if p.strip())
+            else:
+                cleaned_lines.append(cleaned)
+        return cleaned_lines
+
     def _try_parse_json(self, raw: str) -> Any:
         """Best-effort JSON parse; returns *None* on failure."""
         if not raw:
