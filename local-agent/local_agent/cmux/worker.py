@@ -478,6 +478,9 @@ class WorkerPool:
                 "workspace_id": self.workspace_id,
                 "name": "agent-workers",
             })
+            await self.cmux.request("workspace.action", {
+                "workspace_id": self.workspace_id, "action": "pin",
+            })
         except Exception:
             pass
 

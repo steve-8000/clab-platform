@@ -207,6 +207,7 @@ class CmuxRuntime:
                     self._split_targets = []
                     try:
                         await self.cmux.workspace_rename(name[:40], self.workspace_id)
+                        await self.cmux.request("workspace.action", {"workspace_id": self.workspace_id, "action": "pin"})
                     except Exception:
                         pass
                     logger.info("Reusing current workspace as orchestrator: %s (renamed to %s)", self.workspace_id, name)
@@ -222,6 +223,7 @@ class CmuxRuntime:
         self._split_targets = []
         try:
             await self.cmux.workspace_rename(name[:40], self.workspace_id)
+            await self.cmux.request("workspace.action", {"workspace_id": self.workspace_id, "action": "pin"})
         except Exception:
             pass
         logger.info("New workspace created: %s (%s)", self.workspace_id, name)
