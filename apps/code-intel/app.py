@@ -100,6 +100,14 @@ def _ensure_pool() -> asyncpg.Pool:
     return pool
 
 
+_JSONB_KEYS = frozenset({
+    "metadata", "primary_targets", "direct_relations", "transitive_impact",
+    "related_files", "related_tests", "hotspots", "warnings",
+    "affected_symbols", "affected_files", "metrics_delta",
+    "direct_impact", "planned_scope", "actual_scope",
+})
+
+
 def _row_to_dict(row: asyncpg.Record | None) -> dict | None:
     if row is None:
         return None
@@ -107,6 +115,11 @@ def _row_to_dict(row: asyncpg.Record | None) -> dict | None:
     for key, val in out.items():
         if isinstance(val, datetime):
             out[key] = val.isoformat()
+        elif isinstance(val, str) and key in _JSONB_KEYS:
+            try:
+                out[key] = json.loads(val)
+            except (json.JSONDecodeError, TypeError):
+                pass
     return out
 
 
