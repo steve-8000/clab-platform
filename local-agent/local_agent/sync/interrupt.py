@@ -30,6 +30,7 @@ class InterruptHandler:
             # Create interrupt
             resp = await client.post(f"{self.url}/interrupts", json={
                 "session_id": session_id,
+                "thread_id": session_id,
                 "value": question,
             })
             resp.raise_for_status()

@@ -21,6 +21,7 @@ CONF = "configurable"
 THREAD_ID = "thread_id"
 CHECKPOINT_ID = "checkpoint_id"
 CHECKPOINT_NS = "checkpoint_ns"
+RUN_ID = "run_id"
 
 
 class RemoteCheckpointSaver(BaseCheckpointSaver[str]):
@@ -80,19 +81,28 @@ class RemoteCheckpointSaver(BaseCheckpointSaver[str]):
             # Serialize checkpoint (convert non-serializable types)
             cp_data = dict(checkpoint)
             meta_data = dict(metadata) if metadata else {}
+            conf = config.get(CONF, {})
+            if conf.get(RUN_ID):
+                meta_data.setdefault(RUN_ID, conf[RUN_ID])
+            if conf.get(CHECKPOINT_NS):
+                meta_data.setdefault(CHECKPOINT_NS, conf[CHECKPOINT_NS])
+            if cp_data.get("parent_checkpoint_id"):
+                meta_data.setdefault("parent_checkpoint_id", cp_data.get("parent_checkpoint_id"))
 
             resp = self._client.put(
                 f"/checkpoints/{thread_id}",
                 json={"checkpoint": cp_data, "metadata": meta_data},
             )
             resp.raise_for_status()
+            saved = resp.json()
+            checkpoint_id = saved.get("id") or checkpoint.get("id", "")
 
             # Return config with checkpoint_id
             return {
                 **config,
                 CONF: {
                     **config.get(CONF, {}),
-                    CHECKPOINT_ID: checkpoint.get("id", ""),
+                    CHECKPOINT_ID: checkpoint_id,
                 },
             }
         except httpx.HTTPError as e:

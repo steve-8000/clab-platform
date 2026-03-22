@@ -47,37 +47,58 @@ class ControlPlaneSync:
             await self.ws.close()
             self.ws = None
 
-    async def send_state_update(self, session_id: str, status: str, current_task: str = "", step: int = 0):
+    async def send_state_update(
+        self,
+        session_id: str,
+        status: str,
+        current_task: str = "",
+        step: int = 0,
+        run_id: str | None = None,
+    ):
         """Send state update to Control Plane."""
         if not self.ws:
             return
         self.session_id = session_id
-        await self.ws.send(json.dumps({
+        payload = {
             "type": "state_update",
             "session_id": session_id,
+            "thread_id": session_id,  # v2 alias
+            "run_id": run_id,
             "status": status,
             "current_task": current_task,
             "step": step,
-        }))
+        }
+        await self.ws.send(json.dumps(payload))
 
-    async def send_stream_event(self, session_id: str, event_type: str, data: dict):
+    async def send_stream_event(self, session_id: str, event_type: str, data: dict, run_id: str | None = None):
         """Send streaming event (forwarded to SSE subscribers via Control Plane)."""
         if not self.ws:
             return
         await self.ws.send(json.dumps({
-            "type": "stream",
+            "type": "stream_event",
             "session_id": session_id,
+            "thread_id": session_id,
+            "run_id": run_id,
             "event_type": event_type,
             "data": data,
         }))
 
-    async def send_artifact(self, session_id: str, artifact_type: str, path: str, content: str = ""):
+    async def send_artifact(
+        self,
+        session_id: str,
+        artifact_type: str,
+        path: str,
+        content: str = "",
+        run_id: str | None = None,
+    ):
         """Report an artifact to Control Plane."""
         if not self.ws:
             return
         await self.ws.send(json.dumps({
             "type": "artifact",
             "session_id": session_id,
+            "thread_id": session_id,
+            "run_id": run_id,
             "artifact_type": artifact_type,
             "path": path,
             "content": content[:5000],
