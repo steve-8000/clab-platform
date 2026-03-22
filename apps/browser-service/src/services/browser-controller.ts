@@ -1,233 +1,192 @@
-import type { CmuxAdapter } from "@clab/cmux-adapter";
+import { existsSync } from "node:fs";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { EventBus, createEvent } from "@clab/events";
 
-const DEFAULT_TIMEOUT_MS = 30_000; // 30 seconds per browser action
-const POLL_INTERVAL_MS = 500;
-const STABILITY_CHECKS = 3;
+const DEFAULT_TIMEOUT_MS = 30_000;
 
-/**
- * BrowserController delegates browser automation operations to cmux.
- * Each operation sends commands to a browser pane managed by cmux
- * and reads back results from the pane output.
- */
+interface BrowserSession {
+  browser: Browser;
+  context: BrowserContext;
+  page: Page;
+}
+
+interface WaitCondition {
+  type: "selector" | "timeout" | "navigation" | "network-idle";
+  value: string;
+  timeoutMs?: number;
+}
+
+function outputFromPage(page: Page, extra?: Record<string, unknown>): string {
+  return JSON.stringify({
+    url: page.url(),
+    ...extra,
+  });
+}
+
+function successFromError(error: unknown): { success: false; output: string } {
+  return { success: false, output: String(error) };
+}
+
 export class BrowserController {
-  constructor(
-    private cmux: CmuxAdapter,
-    private bus: EventBus,
-  ) {}
+  private sessions = new Map<string, BrowserSession>();
 
-  /**
-   * Navigate to a URL in the browser pane.
-   */
-  async navigate(paneId: string, url: string): Promise<{ success: boolean; output: string }> {
-    const command = `page.goto('${this.escapeJs(url)}')`;
-    await this.cmux.sendText(paneId, `${command}\n`);
+  constructor(private bus: EventBus) {}
 
-    const output = await this.waitForStable(paneId, DEFAULT_TIMEOUT_MS);
-
-    await this.bus.publish(
-      createEvent("browser.navigate", { paneId, url, outputLength: output.length }),
-    );
-
-    return { success: !output.includes("Error"), output };
-  }
-
-  /**
-   * Click an element identified by a selector.
-   */
-  async click(paneId: string, selector: string): Promise<{ success: boolean; output: string }> {
-    const command = `page.click('${this.escapeJs(selector)}')`;
-    await this.cmux.sendText(paneId, `${command}\n`);
-
-    const output = await this.waitForStable(paneId, DEFAULT_TIMEOUT_MS);
-
-    await this.bus.publish(
-      createEvent("browser.click", { paneId, selector, outputLength: output.length }),
-    );
-
-    return { success: !output.includes("Error"), output };
-  }
-
-  /**
-   * Type text into the currently focused element.
-   */
-  async type(paneId: string, selector: string, text: string): Promise<{ success: boolean; output: string }> {
-    const command = `page.type('${this.escapeJs(selector)}', '${this.escapeJs(text)}')`;
-    await this.cmux.sendText(paneId, `${command}\n`);
-
-    const output = await this.waitForStable(paneId, DEFAULT_TIMEOUT_MS);
-
-    await this.bus.publish(
-      createEvent("browser.type", { paneId, selector, textLength: text.length }),
-    );
-
-    return { success: !output.includes("Error"), output };
-  }
-
-  /**
-   * Fill an input field (clears first, then types).
-   */
-  async fill(paneId: string, selector: string, value: string): Promise<{ success: boolean; output: string }> {
-    const command = `page.fill('${this.escapeJs(selector)}', '${this.escapeJs(value)}')`;
-    await this.cmux.sendText(paneId, `${command}\n`);
-
-    const output = await this.waitForStable(paneId, DEFAULT_TIMEOUT_MS);
-
-    await this.bus.publish(
-      createEvent("browser.fill", { paneId, selector, valueLength: value.length }),
-    );
-
-    return { success: !output.includes("Error"), output };
-  }
-
-  /**
-   * Capture a screenshot of the current page.
-   * Returns the path to the saved screenshot file.
-   */
-  async screenshot(paneId: string, path?: string): Promise<{ success: boolean; path: string; output: string }> {
-    const screenshotPath = path ?? `/tmp/clab-screenshot-${Date.now()}.png`;
-    const command = `page.screenshot({ path: '${this.escapeJs(screenshotPath)}', fullPage: true })`;
-    await this.cmux.sendText(paneId, `${command}\n`);
-
-    const output = await this.waitForStable(paneId, DEFAULT_TIMEOUT_MS);
-
-    await this.bus.publish(
-      createEvent("browser.screenshot", { paneId, path: screenshotPath }),
-    );
-
-    return { success: !output.includes("Error"), path: screenshotPath, output };
-  }
-
-  /**
-   * Evaluate JavaScript in the browser page context.
-   */
-  async evaluate(paneId: string, script: string): Promise<{ success: boolean; result: string; output: string }> {
-    const command = `page.evaluate(() => { ${script} })`;
-    await this.cmux.sendText(paneId, `${command}\n`);
-
-    const output = await this.waitForStable(paneId, DEFAULT_TIMEOUT_MS);
-
-    await this.bus.publish(
-      createEvent("browser.eval", { paneId, scriptLength: script.length }),
-    );
-
-    return { success: !output.includes("Error"), result: output, output };
-  }
-
-  /**
-   * Get a DOM snapshot of the current page (simplified HTML structure).
-   */
-  async snapshot(paneId: string): Promise<{ success: boolean; html: string; output: string }> {
-    const command = `page.content()`;
-    await this.cmux.sendText(paneId, `${command}\n`);
-
-    const output = await this.waitForStable(paneId, DEFAULT_TIMEOUT_MS);
-
-    await this.bus.publish(
-      createEvent("browser.snapshot", { paneId, outputLength: output.length }),
-    );
-
-    return { success: !output.includes("Error"), html: output, output };
-  }
-
-  /**
-   * Get text content of an element.
-   */
-  async getText(paneId: string, selector: string): Promise<{ success: boolean; text: string; output: string }> {
-    const command = `page.textContent('${this.escapeJs(selector)}')`;
-    await this.cmux.sendText(paneId, `${command}\n`);
-
-    const output = await this.waitForStable(paneId, DEFAULT_TIMEOUT_MS);
-
-    await this.bus.publish(
-      createEvent("browser.get-text", { paneId, selector }),
-    );
-
-    return { success: !output.includes("Error"), text: output.trim(), output };
-  }
-
-  /**
-   * Wait for a condition to be met (selector visible, network idle, etc.).
-   */
-  async wait(paneId: string, condition: {
-    type: "selector" | "timeout" | "navigation" | "network-idle";
-    value: string;
-    timeoutMs?: number;
-  }): Promise<{ success: boolean; output: string }> {
-    const timeout = condition.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    let command: string;
-
-    switch (condition.type) {
-      case "selector":
-        command = `page.waitForSelector('${this.escapeJs(condition.value)}', { timeout: ${timeout} })`;
-        break;
-      case "timeout":
-        command = `page.waitForTimeout(${parseInt(condition.value, 10)})`;
-        break;
-      case "navigation":
-        command = `page.waitForNavigation({ timeout: ${timeout} })`;
-        break;
-      case "network-idle":
-        command = `page.waitForLoadState('networkidle', { timeout: ${timeout} })`;
-        break;
-      default:
-        return { success: false, output: `Unknown wait condition type: ${condition.type}` };
+  async navigate(sessionId: string, url: string): Promise<{ success: boolean; output: string }> {
+    try {
+      const session = await this.getSession(sessionId);
+      await session.page.goto(url, { timeout: DEFAULT_TIMEOUT_MS, waitUntil: "networkidle" });
+      await this.publish("browser.navigate", { sessionId, url });
+      return { success: true, output: outputFromPage(session.page, { action: "navigate" }) };
+    } catch (error) {
+      return successFromError(error);
     }
-
-    await this.cmux.sendText(paneId, `${command}\n`);
-    const output = await this.waitForStable(paneId, timeout + 5000);
-
-    await this.bus.publish(
-      createEvent("browser.wait", { paneId, conditionType: condition.type, value: condition.value }),
-    );
-
-    return { success: !output.includes("Error"), output };
   }
 
-  /**
-   * Wait for pane output to stabilize (stop changing).
-   */
-  private async waitForStable(paneId: string, timeoutMs: number): Promise<string> {
-    const deadline = Date.now() + timeoutMs;
-    let lastOutput = "";
-    let stableCount = 0;
+  async click(sessionId: string, selector: string): Promise<{ success: boolean; output: string }> {
+    try {
+      const session = await this.getSession(sessionId);
+      await session.page.click(selector, { timeout: DEFAULT_TIMEOUT_MS });
+      await this.publish("browser.click", { sessionId, selector });
+      return { success: true, output: outputFromPage(session.page, { action: "click", selector }) };
+    } catch (error) {
+      return successFromError(error);
+    }
+  }
 
-    // Small initial delay to let command start executing
-    await this.sleep(300);
+  async type(sessionId: string, selector: string, text: string): Promise<{ success: boolean; output: string }> {
+    try {
+      const session = await this.getSession(sessionId);
+      await session.page.locator(selector).pressSequentially(text, { timeout: DEFAULT_TIMEOUT_MS });
+      await this.publish("browser.type", { sessionId, selector, textLength: text.length });
+      return { success: true, output: outputFromPage(session.page, { action: "type", selector }) };
+    } catch (error) {
+      return successFromError(error);
+    }
+  }
 
-    while (Date.now() < deadline) {
-      const output = await this.cmux.readText(paneId);
+  async fill(sessionId: string, selector: string, value: string): Promise<{ success: boolean; output: string }> {
+    try {
+      const session = await this.getSession(sessionId);
+      await session.page.fill(selector, value, { timeout: DEFAULT_TIMEOUT_MS });
+      await this.publish("browser.fill", { sessionId, selector, valueLength: value.length });
+      return { success: true, output: outputFromPage(session.page, { action: "fill", selector }) };
+    } catch (error) {
+      return successFromError(error);
+    }
+  }
 
-      if (output === lastOutput && output.length > 0) {
-        stableCount++;
-        if (stableCount >= STABILITY_CHECKS) {
-          return output;
-        }
+  async screenshot(sessionId: string, path?: string): Promise<{ success: boolean; path: string; output: string }> {
+    try {
+      const session = await this.getSession(sessionId);
+      const screenshotPath = path ?? `/tmp/clab-screenshot-${Date.now()}.png`;
+      await session.page.screenshot({ path: screenshotPath, fullPage: true, timeout: DEFAULT_TIMEOUT_MS });
+      await this.publish("browser.screenshot", { sessionId, path: screenshotPath });
+      return {
+        success: true,
+        path: screenshotPath,
+        output: outputFromPage(session.page, { action: "screenshot", path: screenshotPath }),
+      };
+    } catch (error) {
+      return { success: false, path: path ?? "", output: String(error) };
+    }
+  }
+
+  async evaluate(sessionId: string, script: string): Promise<{ success: boolean; result: string; output: string }> {
+    try {
+      const session = await this.getSession(sessionId);
+      const result = await session.page.evaluate((source: string) => {
+        // Intentionally mirrors the prior arbitrary-page-script interface.
+        return globalThis.eval(source);
+      }, script);
+      const serialized = typeof result === "string" ? result : JSON.stringify(result);
+      await this.publish("browser.eval", { sessionId, scriptLength: script.length });
+      return { success: true, result: serialized, output: outputFromPage(session.page, { action: "evaluate" }) };
+    } catch (error) {
+      return { success: false, result: "", output: String(error) };
+    }
+  }
+
+  async snapshot(sessionId: string): Promise<{ success: boolean; html: string; output: string }> {
+    try {
+      const session = await this.getSession(sessionId);
+      const html = await session.page.content();
+      await this.publish("browser.snapshot", { sessionId, htmlLength: html.length });
+      return { success: true, html, output: outputFromPage(session.page, { action: "snapshot" }) };
+    } catch (error) {
+      return { success: false, html: "", output: String(error) };
+    }
+  }
+
+  async getText(sessionId: string, selector: string): Promise<{ success: boolean; text: string; output: string }> {
+    try {
+      const session = await this.getSession(sessionId);
+      const text = (await session.page.textContent(selector, { timeout: DEFAULT_TIMEOUT_MS })) ?? "";
+      await this.publish("browser.get-text", { sessionId, selector });
+      return { success: true, text, output: outputFromPage(session.page, { action: "get-text", selector }) };
+    } catch (error) {
+      return { success: false, text: "", output: String(error) };
+    }
+  }
+
+  async wait(sessionId: string, condition: WaitCondition): Promise<{ success: boolean; output: string }> {
+    try {
+      const session = await this.getSession(sessionId);
+      const timeout = condition.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+      if (condition.type === "selector") {
+        await session.page.waitForSelector(condition.value, { timeout });
+      } else if (condition.type === "timeout") {
+        await session.page.waitForTimeout(Number.parseInt(condition.value, 10));
+      } else if (condition.type === "navigation") {
+        await session.page.waitForLoadState("load", { timeout });
       } else {
-        stableCount = 0;
-        lastOutput = output;
+        await session.page.waitForLoadState("networkidle", { timeout });
       }
 
-      await this.sleep(POLL_INTERVAL_MS);
+      await this.publish("browser.wait", { sessionId, conditionType: condition.type, value: condition.value });
+      return { success: true, output: outputFromPage(session.page, { action: "wait", condition: condition.type }) };
+    } catch (error) {
+      return successFromError(error);
     }
-
-    // Return whatever we have on timeout
-    return await this.cmux.readText(paneId);
   }
 
-  /**
-   * Escape a string for use in JavaScript string literals.
-   */
-  private escapeJs(str: string): string {
-    return str
-      .replace(/\\/g, "\\\\")
-      .replace(/'/g, "\\'")
-      .replace(/\n/g, "\\n")
-      .replace(/\r/g, "\\r")
-      .replace(/\t/g, "\\t");
+  async closeAll(): Promise<void> {
+    const sessions = Array.from(this.sessions.values());
+    this.sessions.clear();
+
+    await Promise.all(sessions.map(async (session) => {
+      await session.context.close();
+      await session.browser.close();
+    }));
   }
 
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  private async getSession(sessionId: string): Promise<BrowserSession> {
+    const existing = this.sessions.get(sessionId);
+    if (existing) return existing;
+
+    const browser = await chromium.launch({
+      headless: process.env.BROWSER_HEADLESS !== "false",
+      executablePath: resolveChromiumPath(),
+    });
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    page.setDefaultTimeout(DEFAULT_TIMEOUT_MS);
+
+    const session = { browser, context, page };
+    this.sessions.set(sessionId, session);
+    return session;
   }
+
+  private async publish(type: string, payload: Record<string, unknown>): Promise<void> {
+    await this.bus.publish(createEvent(type, payload));
+  }
+}
+
+function resolveChromiumPath(): string {
+  const configuredPath = process.env.CHROMIUM_PATH || process.env.PLAYWRIGHT_CHROMIUM_PATH;
+  if (configuredPath) return configuredPath;
+  if (existsSync("/usr/bin/chromium-browser")) return "/usr/bin/chromium-browser";
+  if (existsSync("/usr/bin/chromium")) return "/usr/bin/chromium";
+  return "/usr/bin/chromium-browser";
 }

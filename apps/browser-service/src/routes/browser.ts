@@ -1,25 +1,18 @@
 import { Hono } from "hono";
-import { CmuxSocketClient } from "@clab/cmux-adapter";
 import { EventBus } from "@clab/events";
 import { createLogger } from "@clab/telemetry";
 import { BrowserController } from "../services/browser-controller.js";
 
 const logger = createLogger("browser-service");
 
-export const cmux = new CmuxSocketClient();
 export const bus = new EventBus();
-const controller = new BrowserController(cmux, bus);
+export const controller = new BrowserController(bus);
 
 let initialized = false;
+
 async function ensureInit(): Promise<void> {
   if (initialized) return;
-  try {
-    await cmux.connect();
-    logger.info("Cmux client connected");
-  } catch (err) {
-    logger.error("Cmux client connection failed", { error: err instanceof Error ? err.message : String(err) });
-    throw err;
-  }
+
   try {
     await bus.connect();
     logger.info("EventBus connected");
@@ -27,14 +20,12 @@ async function ensureInit(): Promise<void> {
     logger.error("EventBus connection failed", { error: err instanceof Error ? err.message : String(err) });
     throw err;
   }
+
   initialized = true;
 }
 
 const browser = new Hono();
 
-// ---------------------------------------------------------------------------
-// POST /navigate — navigate to URL
-// ---------------------------------------------------------------------------
 browser.post("/navigate", async (c) => {
   await ensureInit();
   const body = await c.req.json<{ paneId: string; url: string }>();
@@ -43,17 +34,10 @@ browser.post("/navigate", async (c) => {
     return c.json({ ok: false, error: "paneId and url are required" }, 400);
   }
 
-  try {
-    const result = await controller.navigate(body.paneId, body.url);
-    return c.json({ ok: true, ...result });
-  } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
-  }
+  const result = await controller.navigate(body.paneId, body.url);
+  return c.json({ ok: result.success, ...result }, result.success ? 200 : 500);
 });
 
-// ---------------------------------------------------------------------------
-// POST /click — click element
-// ---------------------------------------------------------------------------
 browser.post("/click", async (c) => {
   await ensureInit();
   const body = await c.req.json<{ paneId: string; selector: string }>();
@@ -62,17 +46,10 @@ browser.post("/click", async (c) => {
     return c.json({ ok: false, error: "paneId and selector are required" }, 400);
   }
 
-  try {
-    const result = await controller.click(body.paneId, body.selector);
-    return c.json({ ok: true, ...result });
-  } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
-  }
+  const result = await controller.click(body.paneId, body.selector);
+  return c.json({ ok: result.success, ...result }, result.success ? 200 : 500);
 });
 
-// ---------------------------------------------------------------------------
-// POST /type — type text
-// ---------------------------------------------------------------------------
 browser.post("/type", async (c) => {
   await ensureInit();
   const body = await c.req.json<{ paneId: string; selector: string; text: string }>();
@@ -81,17 +58,10 @@ browser.post("/type", async (c) => {
     return c.json({ ok: false, error: "paneId, selector, and text are required" }, 400);
   }
 
-  try {
-    const result = await controller.type(body.paneId, body.selector, body.text);
-    return c.json({ ok: true, ...result });
-  } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
-  }
+  const result = await controller.type(body.paneId, body.selector, body.text);
+  return c.json({ ok: result.success, ...result }, result.success ? 200 : 500);
 });
 
-// ---------------------------------------------------------------------------
-// POST /fill — fill input
-// ---------------------------------------------------------------------------
 browser.post("/fill", async (c) => {
   await ensureInit();
   const body = await c.req.json<{ paneId: string; selector: string; value: string }>();
@@ -100,17 +70,10 @@ browser.post("/fill", async (c) => {
     return c.json({ ok: false, error: "paneId, selector, and value are required" }, 400);
   }
 
-  try {
-    const result = await controller.fill(body.paneId, body.selector, body.value);
-    return c.json({ ok: true, ...result });
-  } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
-  }
+  const result = await controller.fill(body.paneId, body.selector, body.value);
+  return c.json({ ok: result.success, ...result }, result.success ? 200 : 500);
 });
 
-// ---------------------------------------------------------------------------
-// POST /screenshot — capture screenshot
-// ---------------------------------------------------------------------------
 browser.post("/screenshot", async (c) => {
   await ensureInit();
   const body = await c.req.json<{ paneId: string; path?: string }>();
@@ -119,17 +82,10 @@ browser.post("/screenshot", async (c) => {
     return c.json({ ok: false, error: "paneId is required" }, 400);
   }
 
-  try {
-    const result = await controller.screenshot(body.paneId, body.path);
-    return c.json({ ok: true, ...result });
-  } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
-  }
+  const result = await controller.screenshot(body.paneId, body.path);
+  return c.json({ ok: result.success, ...result }, result.success ? 200 : 500);
 });
 
-// ---------------------------------------------------------------------------
-// POST /eval — evaluate JavaScript
-// ---------------------------------------------------------------------------
 browser.post("/eval", async (c) => {
   await ensureInit();
   const body = await c.req.json<{ paneId: string; script: string }>();
@@ -138,17 +94,10 @@ browser.post("/eval", async (c) => {
     return c.json({ ok: false, error: "paneId and script are required" }, 400);
   }
 
-  try {
-    const result = await controller.evaluate(body.paneId, body.script);
-    return c.json({ ok: true, ...result });
-  } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
-  }
+  const result = await controller.evaluate(body.paneId, body.script);
+  return c.json({ ok: result.success, ...result }, result.success ? 200 : 500);
 });
 
-// ---------------------------------------------------------------------------
-// POST /snapshot — DOM snapshot
-// ---------------------------------------------------------------------------
 browser.post("/snapshot", async (c) => {
   await ensureInit();
   const body = await c.req.json<{ paneId: string }>();
@@ -157,17 +106,10 @@ browser.post("/snapshot", async (c) => {
     return c.json({ ok: false, error: "paneId is required" }, 400);
   }
 
-  try {
-    const result = await controller.snapshot(body.paneId);
-    return c.json({ ok: true, ...result });
-  } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
-  }
+  const result = await controller.snapshot(body.paneId);
+  return c.json({ ok: result.success, ...result }, result.success ? 200 : 500);
 });
 
-// ---------------------------------------------------------------------------
-// POST /get-text — get element text
-// ---------------------------------------------------------------------------
 browser.post("/get-text", async (c) => {
   await ensureInit();
   const body = await c.req.json<{ paneId: string; selector: string }>();
@@ -176,17 +118,10 @@ browser.post("/get-text", async (c) => {
     return c.json({ ok: false, error: "paneId and selector are required" }, 400);
   }
 
-  try {
-    const result = await controller.getText(body.paneId, body.selector);
-    return c.json({ ok: true, ...result });
-  } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
-  }
+  const result = await controller.getText(body.paneId, body.selector);
+  return c.json({ ok: result.success, ...result }, result.success ? 200 : 500);
 });
 
-// ---------------------------------------------------------------------------
-// POST /wait — wait for condition
-// ---------------------------------------------------------------------------
 browser.post("/wait", async (c) => {
   await ensureInit();
   const body = await c.req.json<{
@@ -206,12 +141,8 @@ browser.post("/wait", async (c) => {
     return c.json({ ok: false, error: "condition.type and condition.value are required" }, 400);
   }
 
-  try {
-    const result = await controller.wait(body.paneId, body.condition);
-    return c.json({ ok: true, ...result });
-  } catch (err) {
-    return c.json({ ok: false, error: String(err) }, 500);
-  }
+  const result = await controller.wait(body.paneId, body.condition);
+  return c.json({ ok: result.success, ...result }, result.success ? 200 : 500);
 });
 
 export { browser as browserRoutes };

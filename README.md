@@ -12,7 +12,6 @@ User Request → Mission → Plan → Waves → Tasks → Agent Sessions → Art
 # 1. Install prerequisites (user responsibility)
 #    - Node.js >= 22     : https://nodejs.org or nvm install 22
 #    - pnpm >= 9.15      : corepack enable && corepack prepare pnpm@9.15.4 --activate
-#    - tmux              : brew install tmux (macOS) / apt install tmux (Linux)
 #    - Claude Code CLI   : curl -fsSL https://claude.ai/install.sh | sh
 #    - Codex CLI         : npm install -g @openai/codex
 #    - Docker (optional) : https://docs.docker.com/get-docker/
@@ -36,7 +35,6 @@ Install these **before** running `setup.sh`:
 |------|---------|---------|
 | Node.js | >= 22 | https://nodejs.org or `nvm install 22` |
 | pnpm | >= 9.15 | `corepack enable && corepack prepare pnpm@9.15.4 --activate` |
-| tmux | any | `brew install tmux` (macOS) / `apt install tmux` (Linux) |
 | Claude Code CLI | latest | `curl -fsSL https://claude.ai/install.sh \| sh` or `npm install -g @anthropic-ai/claude-code` |
 | Codex CLI | latest | `npm install -g @openai/codex` |
 | Docker | any | https://docs.docker.com/get-docker/ (optional, for containers) |
@@ -45,33 +43,26 @@ Install these **before** running `setup.sh`:
 
 1. Verifies all prerequisites are installed
 2. `pnpm install` — installs project dependencies
-3. Creates `.env` from `.env.example`
-4. Leaves runtime credentials optional for local `cmux` execution
-
-Local execution uses logged-in Claude/Codex CLI sessions inside `cmux` panes.
+3. Creates `.env`
+4. Prepares the repo for MCP-first operation with `.mcp.json`, `CLAUDE.md`, and `AGENTS.md`
 
 ## How It Works
 
 ```
-로컬 PC (에이전트 실행)                  K8s (상태 관리)
-┌─────────────────────────┐            ┌─────────────────────┐
-│ Claude Code / Codex TUI  │            │ api-gateway          │
-│  └─ cmux panes           │  상태 동기  │ orchestrator         │
-│      ├─ codex TUI        │ ────────→  │ knowledge-service    │
-│      ├─ claude TUI       │            │ review-service       │
-│      ├─ browser pane     │            │ dashboard UI         │
-│      └─ notifications    │ ←── 대시보드 │ postgres + nats      │
-└─────────────────────────┘            └─────────────────────┘
+Claude / Codex                    clab MCP                      K8s / Host Runtime
+┌──────────────────────┐          ┌────────────────────────┐    ┌─────────────────────┐
+│ CLAUDE.md / AGENTS.md │ ───────→ │ stdio MCP server       │ ─→ │ api-gateway          │
+│ project hooks         │          │ tool routing + policy  │    │ orchestrator         │
+│ local model client    │          │                        │    │ review-service       │
+└──────────────────────┘          └────────────────────────┘    │ knowledge-service    │
+                                                                 │ dashboard / nats / db│
+                                                                 └─────────────────────┘
 ```
 
-- **All agent execution** runs locally via `cmux` panes (`codex`, `claude`, browser)
-- **Workers launch interactive TUIs**, not one-shot batch commands, when `EXECUTION_MODE=local`
-- **Agent sessions are sticky per `workspace + role + engine`** so each agent keeps a live pane across tasks
-- **Task completion** is detected from pane-scoped `cmux` notifications first, with TUI idle checks as fallback
-- **State sync** to K8s platform for dashboard, knowledge, review workflows
-- Set `CLAB_API_URL=https://ai.clab.one` to enable platform sync
-- Without `CLAB_API_URL`, the plugin works fully offline (local cmux only)
-- `hyper-proxy` is not part of the intended execution path for this project
+- `cmux` and terminal-pane orchestration are not part of the intended runtime path.
+- Claude and Codex should reach the deployed platform through the `clab` MCP server.
+- `CLAB_API_URL` is the control-plane entry point.
+- K8s hosts the control plane and data plane; local Claude/Codex clients execute through MCP.
 
 ## Manual Setup
 
@@ -80,47 +71,20 @@ Local execution uses logged-in Claude/Codex CLI sessions inside `cmux` panes.
 ```bash
 pnpm install
 
-# Create .env and add optional overrides if needed
-cp .env.example .env
-# Local cmux execution uses logged-in Claude/Codex CLI sessions by default.
-# API keys are only needed for direct API fallback paths.
+# Create .env and set CLAB_API_URL for your target environment
+cp .env.example .env 2>/dev/null || true
 ```
 
-### 2. Register clab Plugin in Claude Code
-
-The clab plugin exposes orchestration tools to Claude Code via MCP. The actual task execution path for local work is `cmux` + interactive Claude/Codex TUIs.
+### 2. Connect Claude and Codex Through MCP
 
 ```bash
-# Set CLAUDE_PLUGIN_ROOT (add to ~/.zshrc or ~/.bashrc)
-export CLAUDE_PLUGIN_ROOT=$(pwd)
-
-# Register plugin in Claude Code settings (~/.claude/settings.json)
-./scripts/setup.sh   # handles everything automatically
+# The repo already ships .mcp.json
+# Start Claude or Codex from this repository root
+claude
+codex
 ```
 
-<details>
-<summary>Manual plugin registration</summary>
-
-Add to `~/.claude/settings.json`:
-
-```json
-{
-  "enabledPlugins": {
-    "clab@clab-local": true
-  },
-  "extraKnownMarketplaces": {
-    "clab-local": {
-      "source": {
-        "source": "directory",
-        "path": "/absolute/path/to/clab-platform"
-      }
-    }
-  }
-}
-```
-
-The `.claude-plugin/plugin.json` defines the plugin metadata and the `.mcp.json` references `${CLAUDE_PLUGIN_ROOT}` for the MCP server path.
-</details>
+Claude project rules live in `.claude/settings.json` and `CLAUDE.md`. Codex rules live in `AGENTS.md`.
 
 ### 5. Start Services
 
@@ -131,16 +95,16 @@ docker compose -f infra/docker/docker-compose.yml up -d postgres nats
 # Run database migrations
 pnpm db:push
 
-# Start all services in dev mode
+# Start all services in dev mode if running locally
 pnpm dev
 ```
 
-### 6. Launch Claude with clab
+### 6. Use the MCP Tools
 
 ```bash
-# From any directory — the plugin loads automatically
+# Launch from the repo root so .mcp.json is discovered
 claude
-# Use /clab:init to set up, /clab:dispatch to delegate tasks
+codex
 ```
 
 ## Architecture
@@ -148,15 +112,14 @@ claude
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    api-gateway :4000                     │
-│                REST / WebSocket facade                   │
+│                REST facade for MCP tools                 │
 ├─────────────┬───────────────────────┬───────────────────┤
 │ orchestrator │  runtime-manager     │  review-service   │
 │    :4001    │       :4002           │     :4006         │
-├─────────────┼───────────┬───────────┼───────────────────┤
-│             │worker-codex│worker-claude│ browser-service │
-│             │   :4003   │   :4004    │     :4005       │
-├─────────────┴───────────┴────────────┴──────────────────┤
-│              PostgreSQL  │  NATS JetStream               │
+├─────────────┼───────────────────────┼───────────────────┤
+│ knowledge-service :4007             │ dashboard :3000   │
+├─────────────────────────────────────────────────────────┤
+│                PostgreSQL + NATS JetStream              │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -179,13 +142,11 @@ Mission
 |---------|------|------|
 | api-gateway | 4000 | External entry point (REST/WS) |
 | orchestrator | 4001 | Mission planning, wave scheduling |
-| runtime-manager | 4002 | Sticky session lifecycle, `cmux` pane management |
-| worker-codex | 4003 | Codex task execution in `cmux` TUI |
-| worker-claude | 4004 | Claude task execution in `cmux` TUI |
-| browser-service | 4005 | Browser automation |
+| runtime-manager | 4002 | Session and state tracking |
 | review-service | 4006 | QA and verification |
 | knowledge-service | 4007 | AKB knowledge layer |
 | dashboard | 3000 | Operations UI |
+| mcp-server | stdio | Claude/Codex integration layer |
 
 ## Deployment (K8s / ArgoCD GitOps)
 
@@ -193,13 +154,13 @@ Mission
 
 ```bash
 # Build all service images
-for svc in api-gateway mission-service runtime-manager worker-codex worker-claude browser-service review-service; do
+for svc in api-gateway mission-service runtime-manager browser-service review-service knowledge-service; do
   docker build --build-arg SERVICE=$svc -t clab/$svc:v1 .
 done
 docker build -f infra/docker/Dockerfile.dashboard -t clab/dashboard:v1 .
 
 # Import to k3s containerd (for imagePullPolicy: Never)
-for img in api-gateway mission-service runtime-manager worker-codex worker-claude browser-service review-service dashboard; do
+for img in api-gateway mission-service runtime-manager browser-service review-service knowledge-service dashboard; do
   docker save clab/$img:v1 | ssh user@server ctr images import -
 done
 
@@ -214,7 +175,7 @@ clab-platform (source)          k8s-stg (deployment repo)      K8s Cluster
 │ apps/             │  build   │ workloads/           │  sync  │ ns:           │
 │ packages/         │ ──────→  │   clab-platform/     │ ─────→ │ clab-platform │
 │ infra/k8s/        │  image   │     kustomization.yaml│ ArgoCD│              │
-│ Dockerfile        │          │     services.yaml    │        │ 11 pods      │
+│ Dockerfile        │          │     services.yaml    │        │ core workloads│
 └──────────────────┘           │     dashboard.yaml   │        └──────────────┘
                                │     postgres.yaml    │
                                │     nats.yaml        │
@@ -241,13 +202,12 @@ clab-platform/
 ├── apps/
 │   ├── api-gateway/          # REST/WS facade            :4000
 │   ├── orchestrator/         # Mission planner           :4001
-│   ├── runtime-manager/      # Sticky session binding    :4002
-│   ├── worker-codex/         # Codex execution worker    :4003
-│   ├── worker-claude/        # Claude execution worker   :4004
-│   ├── browser-service/      # Browser automation        :4005
+│   ├── runtime-manager/      # Session state manager     :4002
+│   ├── browser-service/      # Browser service           :4005
 │   ├── review-service/       # QA / verification         :4006
 │   ├── knowledge-service/    # AKB knowledge layer       :4007
-│   └── dashboard/            # Next.js operations UI     :3000
+│   ├── dashboard/            # Next.js operations UI     :3000
+│   └── mcp-server/           # stdio MCP bridge
 ├── packages/
 │   ├── domain/               # Entities, enums, state machines
 │   ├── db/                   # Drizzle schema + migrations
@@ -255,8 +215,7 @@ clab-platform/
 │   ├── policy/               # RBAC, capabilities, approval gates
 │   ├── artifacts/            # Result artifacts store
 │   ├── prompts/              # Role prompt templates
-│   ├── cmux-adapter/         # cmux RPC adapter
-│   ├── engines/              # Codex/Claude/Browser runners
+│   ├── engines/              # Shared execution helpers
 │   ├── telemetry/            # OTel tracing + metrics + logging
 │   ├── sdk/                  # Internal client SDK
 │   └── knowledge/            # AKB knowledge layer
@@ -291,7 +250,7 @@ clab-platform/
 | Orchestration | Kubernetes (Kustomize) |
 | GitOps | ArgoCD |
 | AI Agents | Claude Code CLI + OpenAI Codex CLI |
-| Terminal Mux | cmux (tmux-based agent multiplexer) |
+| Integration | MCP + repo rules + hooks |
 
 ## Roles
 

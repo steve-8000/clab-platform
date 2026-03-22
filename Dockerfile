@@ -10,7 +10,7 @@ WORKDIR /app
 # --- Install + Build ---
 FROM base AS builder
 COPY . .
-RUN pnpm install --frozen-lockfile && pnpm build
+RUN pnpm install --no-frozen-lockfile && pnpm build
 
 # --- Production runner (keep full monorepo for pnpm symlinks) ---
 FROM node:22-alpine AS runner
@@ -19,6 +19,7 @@ ARG PORT=4000
 ENV NODE_ENV=production PORT=${PORT}
 
 RUN addgroup -S clab && adduser -S clab -G clab
+RUN if [ "$SERVICE" = "browser-service" ]; then apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont; fi
 WORKDIR /app
 
 # Copy entire built workspace (pnpm needs symlink structure)

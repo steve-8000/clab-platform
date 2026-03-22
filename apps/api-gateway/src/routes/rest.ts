@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 
 const MISSION_SERVICE_URL = process.env.MISSION_SERVICE_URL || "http://mission-service:4001";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
@@ -10,11 +10,7 @@ function safeError(message: string, err?: unknown): Record<string, string> {
 
 const rest = new Hono();
 
-// Proxy all /missions/* to mission-service
-rest.all("/missions/*", async (c) => {
-  const path = c.req.path.replace("/v1", "");  // /v1/missions/xxx -> /v1/missions/xxx
-  const url = `${MISSION_SERVICE_URL}/v1${path.startsWith("/missions") ? path : "/missions" + path}`;
-
+async function proxyJson(c: Context, targetUrl: string): Promise<Response> {
   const init: RequestInit = {
     method: c.req.method,
     headers: { "Content-Type": "application/json" },
@@ -24,32 +20,48 @@ rest.all("/missions/*", async (c) => {
     init.body = await c.req.text();
   }
 
+  const res = await fetch(targetUrl, init);
+  return new Response(await res.text(), {
+    status: res.status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// Proxy all /missions/* to mission-service
+rest.all("/missions", async (c) => {
   try {
-    const res = await fetch(url, init);
-    const data = await res.text();
-    return new Response(data, {
-      status: res.status,
-      headers: { "Content-Type": "application/json" },
-    });
+    return await proxyJson(c, `${MISSION_SERVICE_URL}/v1/missions`);
+  } catch (err) {
+    return c.json(safeError("Mission service unavailable", err), 502);
+  }
+});
+
+rest.all("/missions/*", async (c) => {
+  const path = c.req.path.replace("/v1", "");  // /v1/missions/xxx -> /v1/missions/xxx
+  const url = `${MISSION_SERVICE_URL}/v1${path.startsWith("/missions") ? path : "/missions" + path}`;
+
+  try {
+    return await proxyJson(c, url);
   } catch (err) {
     return c.json(safeError("Mission service unavailable", err), 502);
   }
 });
 
 // Proxy /workspaces/* to mission-service
+rest.all("/workspaces", async (c) => {
+  const url = `${MISSION_SERVICE_URL}/v1/workspaces`;
+  try {
+    return await proxyJson(c, url);
+  } catch (err) {
+    return c.json(safeError("Mission service unavailable", err), 502);
+  }
+});
+
 rest.all("/workspaces/*", async (c) => {
   const path = c.req.path.replace("/v1", "");
   const url = `${MISSION_SERVICE_URL}/v1${path}`;
-  const init: RequestInit = {
-    method: c.req.method,
-    headers: { "Content-Type": "application/json" },
-  };
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
-    init.body = await c.req.text();
-  }
   try {
-    const res = await fetch(url, init);
-    return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json" } });
+    return await proxyJson(c, url);
   } catch (err) {
     return c.json({ error: "Mission service unavailable" }, 502);
   }
@@ -143,24 +155,29 @@ rest.get("/dashboard", async (c) => {
 });
 
 // Proxy /sessions/* to runtime-manager
-rest.all("/sessions/*", async (c) => {
+rest.all("/sessions", async (c) => {
   const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
-  const path = c.req.path.replace("/v1", "");
   try {
-    const res = await fetch(`${RUNTIME_URL}${path}`);
-    return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json" } });
+    return await proxyJson(c, `${RUNTIME_URL}/sessions`);
   } catch (err) {
     return c.json({ error: "Runtime manager unavailable" }, 502);
   }
 });
 
-// Proxy /approvals to review-service directly via DB
+rest.all("/sessions/*", async (c) => {
+  const RUNTIME_URL = process.env.RUNTIME_MANAGER_URL || "http://runtime-manager:4002";
+  const path = c.req.path.replace("/v1", "");
+  try {
+    return await proxyJson(c, `${RUNTIME_URL}${path}`);
+  } catch (err) {
+    return c.json({ error: "Runtime manager unavailable" }, 502);
+  }
+});
+
+// Proxy approval operations to review-service.
 rest.get("/approvals", async (c) => {
   const REVIEW_URL = process.env.REVIEW_SERVICE_URL || "http://review-service:4006";
-  // For now, query the mission-service DB (approvals table is shared)
-  const MISSION_URL = process.env.MISSION_SERVICE_URL || "http://mission-service:4001";
   try {
-    // Use a direct DB query via a new review-service endpoint
     const res = await fetch(`${REVIEW_URL}/approvals`, { signal: AbortSignal.timeout(5000) });
     if (res.ok) return new Response(await res.text(), { headers: { "Content-Type": "application/json" } });
     return c.json({ error: "Service unavailable" }, 502);
@@ -169,22 +186,43 @@ rest.get("/approvals", async (c) => {
   }
 });
 
+rest.post("/approvals/:id/resolve", async (c) => {
+  const REVIEW_URL = process.env.REVIEW_SERVICE_URL || "http://review-service:4006";
+  const id = c.req.param("id");
+
+  try {
+    const res = await fetch(`${REVIEW_URL}/approvals/${id}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: await c.req.text(),
+      signal: AbortSignal.timeout(5000),
+    });
+
+    return new Response(await res.text(), {
+      status: res.status,
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    return c.json(safeError("Review service unavailable", err), 502);
+  }
+});
+
 // Proxy /knowledge/* to knowledge-service
 const KNOWLEDGE_URL = process.env.KNOWLEDGE_SERVICE_URL || "http://knowledge-service:4007";
+rest.all("/knowledge", async (c) => {
+  try {
+    return await proxyJson(c, `${KNOWLEDGE_URL}/v1/knowledge`);
+  } catch (err) {
+    return c.json(safeError("Knowledge service unavailable", err), 502);
+  }
+});
+
 rest.all("/knowledge/*", async (c) => {
   const path = c.req.path.replace("/v1", "");
   const qs = c.req.url.includes("?") ? "?" + c.req.url.split("?")[1] : "";
   const url = `${KNOWLEDGE_URL}/v1${path}${qs}`;
-  const init: RequestInit = {
-    method: c.req.method,
-    headers: { "Content-Type": "application/json" },
-  };
-  if (c.req.method !== "GET" && c.req.method !== "HEAD") {
-    init.body = await c.req.text();
-  }
   try {
-    const res = await fetch(url, init);
-    return new Response(await res.text(), { status: res.status, headers: { "Content-Type": "application/json" } });
+    return await proxyJson(c, url);
   } catch (err) {
     return c.json(safeError("Knowledge service unavailable", err), 502);
   }

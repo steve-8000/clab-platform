@@ -11,12 +11,9 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@clab/cmux-adapter": "workspace:*",
     "@clab/db": "workspace:*",
     "@clab/domain": "workspace:*",
-    "@clab/engines": "workspace:*",
     "@clab/events": "workspace:*",
-    "@clab/prompts": "workspace:*",
     "@clab/telemetry": "workspace:*",
     "@hono/node-server": "^1.13",
     "drizzle-orm": "^0.38.4",

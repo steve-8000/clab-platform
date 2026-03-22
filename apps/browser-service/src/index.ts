@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server";
 import { app } from "./app.js";
 import { createLogger } from "@clab/telemetry";
-import { cmux, bus } from "./routes/browser.js";
+import { bus, controller } from "./routes/browser.js";
 
 const logger = createLogger("browser-service");
 const PORT = Number(process.env.PORT ?? 4005);
@@ -14,10 +14,10 @@ const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
 async function shutdown(signal: string) {
   logger.info("Shutting down", { signal });
   try {
-    cmux.disconnect();
-    logger.info("Cmux client disconnected");
+    await controller.closeAll();
+    logger.info("Browser sessions closed");
   } catch (err) {
-    logger.error("Cmux disconnect failed", { error: err instanceof Error ? err.message : String(err) });
+    logger.error("Browser session shutdown failed", { error: err instanceof Error ? err.message : String(err) });
   }
   try {
     await bus.close();

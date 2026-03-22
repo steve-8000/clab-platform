@@ -19,10 +19,7 @@
     "nats": "^2.29",
     "postgres": "^3.4",
     "@clab/events": "workspace:*",
-    "@clab/cmux-adapter": "workspace:*",
-    "@clab/engines": "workspace:*",
     "@clab/telemetry": "workspace:*",
-    "@clab/runtime-contracts": "workspace:*",
     "@clab/policy": "workspace:*"
   },
   "devDependencies": {

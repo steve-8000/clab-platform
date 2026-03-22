@@ -11,13 +11,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "hono": "^4.7",
-    "@hono/node-server": "^1.13",
-    "@clab/domain": "workspace:*",
-    "@clab/db": "workspace:*",
     "@clab/events": "workspace:*",
-    "@clab/cmux-adapter": "workspace:*",
-    "@clab/telemetry": "workspace:*"
+    "@clab/telemetry": "workspace:*",
+    "@hono/node-server": "^1.13",
+    "hono": "^4.7",
+    "playwright-core": "^1.52.0"
   },
   "devDependencies": {
     "typescript": "^5.7",
