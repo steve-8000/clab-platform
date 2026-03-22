@@ -23,7 +23,8 @@ from typing import Any
 
 from .client import CmuxClient
 from .monitor import CompletionMonitor
-from .executor import TaskResult, AUTONOMOUS_DIRECTIVE
+# TaskResult and AUTONOMOUS_DIRECTIVE are imported lazily to avoid circular imports
+# (executor.py imports WorkerPool from this module)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,8 @@ class Worker:
 
     async def start_engine(self, workdir: str, system_prompt: str = "") -> None:
         """Launch the engine CLI in this worker's surface (one-time)."""
+        from .executor import AUTONOMOUS_DIRECTIVE
+
         if self._engine_started:
             return
 
@@ -102,6 +105,8 @@ class Worker:
         task_id: str | None = None,
     ) -> TaskResult:
         """Inject instruction and wait for idle."""
+        from .executor import TaskResult
+
         self.state = WorkerState.RUNNING
 
         await self.cmux.send_text(self.surface_id, instruction)
@@ -341,6 +346,8 @@ class WorkerPool:
             async def _run_with_review(
                 worker: Worker, task: dict, result_idx: int
             ) -> None:
+                from .executor import TaskResult
+
                 task_result = await worker.inject_and_collect(
                     task["description"], timeout=timeout, task_id=task.get("id")
                 )
