@@ -36,6 +36,7 @@ spec:
       containers:
         - name: control-plane
           image: clab/control-plane:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
               protocol: TCP

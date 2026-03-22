@@ -55,6 +55,7 @@ spec:
       containers:
         - name: knowledge-service
           image: clab/knowledge-service:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 4007
               protocol: TCP
