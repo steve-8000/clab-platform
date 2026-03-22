@@ -105,6 +105,58 @@ class RuntimeStore:
           created_at TIMESTAMPTZ NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_artifacts_thread_created ON artifacts(thread_id, created_at DESC);
+
+        -- Compatibility migration for pre-existing tables in shared databases.
+        ALTER TABLE IF EXISTS threads
+          ADD COLUMN IF NOT EXISTS worker_id TEXT NOT NULL DEFAULT '',
+          ADD COLUMN IF NOT EXISTS goal TEXT NOT NULL DEFAULT '',
+          ADD COLUMN IF NOT EXISTS workdir TEXT NOT NULL DEFAULT '.',
+          ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'CREATED',
+          ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
+          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+        ALTER TABLE IF EXISTS runs
+          ADD COLUMN IF NOT EXISTS thread_id TEXT,
+          ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'CREATED',
+          ADD COLUMN IF NOT EXISTS current_task TEXT,
+          ADD COLUMN IF NOT EXISTS step INTEGER NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
+          ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ;
+
+        ALTER TABLE IF EXISTS run_events
+          ADD COLUMN IF NOT EXISTS thread_id TEXT,
+          ADD COLUMN IF NOT EXISTS run_id TEXT,
+          ADD COLUMN IF NOT EXISTS seq BIGINT NOT NULL DEFAULT 0,
+          ADD COLUMN IF NOT EXISTS type TEXT NOT NULL DEFAULT 'event',
+          ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          ADD COLUMN IF NOT EXISTS ts TIMESTAMPTZ;
+
+        ALTER TABLE IF EXISTS checkpoints
+          ADD COLUMN IF NOT EXISTS thread_id TEXT,
+          ADD COLUMN IF NOT EXISTS run_id TEXT,
+          ADD COLUMN IF NOT EXISTS node_name TEXT NOT NULL DEFAULT '',
+          ADD COLUMN IF NOT EXISTS parent_checkpoint_id TEXT,
+          ADD COLUMN IF NOT EXISTS checkpoint JSONB,
+          ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
+
+        ALTER TABLE IF EXISTS interrupts
+          ADD COLUMN IF NOT EXISTS thread_id TEXT,
+          ADD COLUMN IF NOT EXISTS run_id TEXT,
+          ADD COLUMN IF NOT EXISTS value TEXT,
+          ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending',
+          ADD COLUMN IF NOT EXISTS resume_value TEXT,
+          ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
+          ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+
+        ALTER TABLE IF EXISTS artifacts
+          ADD COLUMN IF NOT EXISTS thread_id TEXT,
+          ADD COLUMN IF NOT EXISTS run_id TEXT,
+          ADD COLUMN IF NOT EXISTS type TEXT,
+          ADD COLUMN IF NOT EXISTS path TEXT,
+          ADD COLUMN IF NOT EXISTS content TEXT NOT NULL DEFAULT '',
+          ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;
         """
         with self._connect() as conn:
             with conn.cursor() as cur:
