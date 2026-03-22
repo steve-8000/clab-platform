@@ -41,15 +41,14 @@ async def _get_cmux_runtime():
 
 
 async def cleanup_cmux_runtime():
-    """Shutdown cmux runtime and reset global state. Call after each mission."""
+    """Reset runtime state after mission. Workspace stays alive for reuse."""
     global _cmux_runtime, _cmux_worker_pool
     if _cmux_runtime:
         try:
             await _cmux_runtime.shutdown()
-            await _cmux_runtime.cmux.disconnect()
         except Exception as exc:
             logger.debug("cmux cleanup error: %s", exc)
-        _cmux_runtime = None
+        # Keep _cmux_runtime alive — reuse workspace on next mission
     _cmux_worker_pool = None
     try:
         from local_agent.config import cleanup_planner_runtime

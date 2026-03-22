@@ -94,13 +94,8 @@ async def _invoke_via_cmux(runtime, system_prompt: str, user_prompt: str, timeou
 async def cleanup_planner_runtime():
     """Shutdown planner runtime. Called after mission."""
     global _planner_runtime, _planner_engine_started
-    if _planner_runtime:
-        try:
-            await _planner_runtime.shutdown()
-            await _planner_runtime.cmux.disconnect()
-        except Exception:
-            pass
-        _planner_runtime = None
+    # Keep planner runtime and workspace alive for reuse
+    # Only reset engine tracking so surfaces can be re-registered
     _planner_engine_started = False
 
 

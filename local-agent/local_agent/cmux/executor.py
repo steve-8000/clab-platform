@@ -611,19 +611,18 @@ class CmuxRuntime:
             self._split_targets = self._split_targets[:1]
 
     async def shutdown(self) -> None:
-        """Release all surfaces, worker pool, browser, and utility workspace."""
+        """Reset runtime state. Workspace and surfaces are preserved for reuse."""
         if self._worker_pool:
-            await self._worker_pool.shutdown()
             self._worker_pool = None
 
         if self._browser:
             await self._browser.close()
             self._browser = None
 
-        for engine in list(self._engine_surfaces):
-            await self.release_surface(engine)
+        self._engine_surfaces.clear()
+        self.surfaces = SurfaceRegistry()
+        self._split_targets = []
 
-        # Close utility workspace surfaces
         if self._utility_terminal_id:
             try:
                 await self.cmux.surface_close(self._utility_terminal_id)
@@ -632,12 +631,4 @@ class CmuxRuntime:
             self._utility_terminal_id = None
             self._utility_workspace_id = None
 
-        if self.workspace_id:
-            try:
-                await self.cmux.workspace_close(self.workspace_id)
-                logger.info("Workspace closed: %s", self.workspace_id)
-            except Exception as exc:
-                logger.debug("Failed to close workspace %s: %s", self.workspace_id, exc)
-            self.workspace_id = None
-
-        logger.info("Runtime shutdown: workspace=%s", self.workspace_id)
+        logger.info("Runtime reset (workspace preserved): %s", self.workspace_id)
