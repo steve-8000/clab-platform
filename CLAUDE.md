@@ -30,6 +30,8 @@ Agent Workspace (created at plan stage):
 - **cmux notify = trigger** ("looks done") — NOT source of truth
 - **clab review = truth** ("actually succeeded, failed, or waiting")
 - Agents run with full permissions: `--dangerously-skip-permissions`, `--full-auto`
+- Reasoning (planner/verifier/replanner): subprocess via `claude --print`, no workspace created
+- mission_run: parallel by default (MCP `parallel=true`), CLI opt-in (`--parallel`)
 
 ## Available MCP Tools
 
@@ -63,6 +65,53 @@ Agent Workspace (created at plan stage):
 5. clab state machine verifies actual success/failure
 6. `knowledge_post_k` — verify document integrity
 7. Store insights with `knowledge_store`
+
+## cmux Surface Split Rules
+
+Balanced 2-column grid layout. Never cascade splits from same surface.
+
+```
+Step 1: main → split right → w0       [main]     [w0]
+Step 2: main → split down  → w1       [w1]       [w2]
+Step 3: w0   → split down  → w2       [reviewer]
+Step 4: w1   → split down  → reviewer
+```
+
+- Alternate between left/right columns when splitting down
+- Cascading down from same surface makes each subsequent pane smaller
+- WorkerPool (worker.py) and CmuxRuntime (executor.py) both follow this pattern
+
+## cmux Notification-Based Monitoring
+
+Never use blind `sleep N` to wait for task completion. Use cmux notifications.
+
+### Notification format
+```
+cmux list-notifications output:
+index:notification_id | workspace_id | surface_id | status | title | subtitle | body
+
+Codex completion:  title="Codex", subtitle="", body=""
+Claude completion:  title="Claude Code", subtitle="Completed in {project}", body="completion message"
+```
+
+### Polling pattern (orchestrator)
+```bash
+# Poll every 2s until notification appears
+for i in $(seq 1 150); do
+  sleep 2
+  notifs=$(cmux list-notifications 2>&1)
+  [ "$notifs" != "No notifications" ] && break
+done
+```
+
+### Alternatives
+- `tail -f logfile | grep -m1 "Completed:"` — log-based detection
+- `run_in_background` + notification polling — parallel work during wait
+
+### Internal monitoring (monitor.py)
+- Primary: notification-first (`_check_notifications` matches `surface_id`)
+- Fallback: idle pattern detection (double-check confirmation)
+- Auto-responds to permission prompts for autonomous operation
 
 ## Key Paths
 
