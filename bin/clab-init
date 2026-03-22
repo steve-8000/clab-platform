@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-CLAB_HOME="${CLAB_HOME:-/Users/steve/clab-platform}"
-MCP_PYTHON="${CLAB_HOME}/local-agent/.venv/bin/python"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLAB_HOME="${CLAB_HOME:-$(dirname "$SCRIPT_DIR")}"
+MCP_PYTHON="${CLAB_HOME}/mcp-server/.venv/bin/python"
 MCP_SERVER="${CLAB_HOME}/mcp-server/server.py"
 
 # Create .mcp.json in current directory

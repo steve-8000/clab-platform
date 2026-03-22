@@ -3,6 +3,52 @@
 Stateful development agent platform with knowledge integration.
 LangGraph-native, 3-layer architecture: Control Plane + Knowledge Plane + cmux Runtime Plane.
 
+## Prerequisites
+
+- **Python 3.11+**
+- **Node.js 18+** (for dashboard)
+- **Go 1.21+** (for knowledge-server, if building from source)
+- **Docker + Kubernetes** (for K8s deployment, optional)
+- **Claude Code CLI** or **Codex CLI** (at least one required)
+  - `npm install -g @anthropic-ai/claude-code`
+  - `npm install -g @openai/codex`
+- **cmux** (required for parallel execution mode)
+
+## Setup
+
+```bash
+git clone https://github.com/steve-8000/clab-platform.git
+cd clab-platform
+bash setup.sh
+```
+
+This installs local-agent and mcp-server Python dependencies, creates `.env`, and registers MCP tools with Codex.
+
+### Use as MCP Tool (recommended)
+
+```bash
+# In any project directory:
+bin/clab-init              # Creates .mcp.json + .claude/settings.json
+claude                     # or: codex
+# Then use mission_run, knowledge_search, etc. as MCP tools
+```
+
+### Use Local Agent Directly
+
+```bash
+cd local-agent && source .venv/bin/activate
+python -m local_agent --parallel --workdir ~/my-project "implement REST API"
+```
+
+### Deploy K8s Services (optional)
+
+```bash
+cp .env.example .env       # Edit API keys
+bin/build-images.sh
+kubectl apply -f k8s/
+bin/port-forward.sh        # For local access
+```
+
 ## Architecture
 
 ```
@@ -21,32 +67,6 @@ C. cmux Runtime Plane (Local)
   │   └── Browser surface (isolated verification)
   └── Notification-based completion monitoring
 ```
-
-## Quick Start
-
-### 1. Deploy K8s Services
-
-```bash
-bin/build-images.sh
-kubectl apply -f k8s/
-kubectl -n clab wait --for=condition=ready pod --all --timeout=120s
-```
-
-### 2. Run Local Agent
-
-```bash
-cd local-agent && ./setup.sh && source .venv/bin/activate
-
-# Single goal (parallel by default via MCP)
-python -m local_agent --parallel --workdir ~/my-project "implement REST API"
-
-# Or use MCP tool from Claude Code
-# mission_run(goal="implement REST API", parallel=true)
-```
-
-### 3. Dashboard
-
-Open https://ai.clab.one (or `http://localhost:3000` with port-forward)
 
 ## Components
 
