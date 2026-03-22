@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "clab": {
-      "command": "python3",
+      "command": "mcp-server/.venv/bin/python",
       "args": ["mcp-server/server.py"]
     }
   }

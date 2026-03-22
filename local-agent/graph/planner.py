@@ -30,7 +30,7 @@ async def planner_node(state: dict) -> dict:
     context = state.get("enriched_context", "") or "No prior context."
     user_prompt = f"Goal: {state['goal']}\n\nContext:\n{context}"
 
-    response = await invoke_cli(PLANNER_SYSTEM_PROMPT, user_prompt)
+    response = await invoke_cli(PLANNER_SYSTEM_PROMPT, user_prompt, timeout=600)
     logger.info("Planner response length: %d chars", len(response))
 
     tasks = _parse_tasks(response)

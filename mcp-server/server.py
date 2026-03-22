@@ -211,14 +211,14 @@ async def _mission_run(args: dict):
 
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=600, cwd=LOCAL_AGENT_DIR,
+            cmd, capture_output=True, text=True, timeout=3600, cwd=LOCAL_AGENT_DIR,
         )
         output = proc.stdout
         if proc.returncode != 0:
             output += f"\nSTDERR:\n{proc.stderr}"
         return [TextContent(type="text", text=output or "Mission completed (no output)")]
     except subprocess.TimeoutExpired:
-        return [TextContent(type="text", text="Mission timed out after 600s")]
+        return [TextContent(type="text", text="Mission timed out after 3600s")]
     except FileNotFoundError:
         return [TextContent(type="text", text="Local agent not found. Run setup.sh first.")]
 
