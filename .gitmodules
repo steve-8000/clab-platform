@@ -1,0 +1,3 @@
+[submodule "vendor/codegraphcontext"]
+	path = vendor/codegraphcontext
+	url = https://github.com/CodeGraphContext/CodeGraphContext.git

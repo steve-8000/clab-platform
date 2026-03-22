@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -174,42 +176,45 @@ class CmuxRuntime:
         self._browser: CmuxBrowser | None = None
         self._right_surface_id: str | None = None
         self._worker_pool: WorkerPool | None = None
-        self._browser_workspace_id: str | None = None
+        self._utility_workspace_id: str | None = None
+        self._utility_terminal_id: str | None = None
+        self._current_workdir: str = ""
 
     # ---- Workspace (= Agent) lifecycle ----
 
-    async def create_agent(self, name: str, workdir: str = "") -> str:
-        """Get or create a cmux workspace for this agent.
+    async def create_agent(self, name: str, workdir: str = "", reuse_current: bool = False) -> str:
+        """Create a new cmux workspace for this agent.
 
-        Reuses an existing workspace matching the workdir if one exists.
-        Only creates a new workspace if none is found.
-        One workspace = one agent. Multiple surfaces within it = parallel channels.
+        By default creates a NEW workspace. Set reuse_current=True to reuse
+        the active workspace (useful when the caller IS the workspace owner).
         """
-        # Try to reuse the currently selected/active workspace first
-        try:
-            current = await self.cmux.workspace_current()
-            if current:
-                self.workspace_id = current.get("id", current.get("workspace_id"))
-                self.workspace_name = name
-                # Rename workspace to reflect the project/agent name
-                try:
-                    await self.cmux.workspace_rename(name[:40], self.workspace_id)
-                except Exception:
-                    pass
-                logger.info("Reusing current workspace: %s (renamed to %s)", self.workspace_id, name)
-                return self.workspace_id
-        except Exception as exc:
-            logger.debug("Failed to get current workspace: %s", exc)
-
-        # Also try to reuse current workspace if workspace_id is already set
+        # Idempotent: if we already have a workspace, reuse it
         if self.workspace_id:
             logger.info("Reusing existing workspace: %s", self.workspace_id)
             return self.workspace_id
 
-        # Create new workspace only if nothing to reuse
+        # Optionally reuse current workspace
+        if reuse_current:
+            try:
+                current = await self.cmux.workspace_current()
+                if current:
+                    self.workspace_id = current.get("id", current.get("workspace_id"))
+                    self.workspace_name = name
+                    self._current_workdir = workdir
+                    try:
+                        await self.cmux.workspace_rename(name[:40], self.workspace_id)
+                    except Exception:
+                        pass
+                    logger.info("Reusing current workspace: %s (renamed to %s)", self.workspace_id, name)
+                    return self.workspace_id
+            except Exception as exc:
+                logger.debug("Failed to get current workspace: %s", exc)
+
+        # Create new workspace
         ws = await self.cmux.workspace_create(name[:40])
         self.workspace_id = ws.get("id", ws.get("workspace_id"))
         self.workspace_name = name
+        self._current_workdir = workdir
         logger.info("New workspace created: %s (%s)", self.workspace_id, name)
         return self.workspace_id
 
@@ -321,15 +326,35 @@ class CmuxRuntime:
 
         self.surfaces.mark_started(engine)
 
+    async def write_prompt_file(self, instruction: str, workdir: str = "") -> str:
+        """Write long prompt to project-local file, return reference instruction."""
+        prompt_id = uuid.uuid4().hex[:8]
+        base_dir = workdir or os.getcwd()
+        prompt_dir = os.path.join(base_dir, ".clab", "prompts")
+        os.makedirs(prompt_dir, exist_ok=True)
+        prompt_path = os.path.join(prompt_dir, f"{prompt_id}.md")
+
+        with open(prompt_path, "w") as f:
+            f.write(instruction)
+
+        logger.info("Prompt file written: %s (%d chars)", prompt_path, len(instruction))
+        return f"Read the file {prompt_path} and execute ALL instructions inside it exactly. Do not summarize — execute them."
+
     async def inject_command(self, engine: str, instruction: str) -> None:
         """Send a command/instruction to an engine's surface, then press Enter.
 
         For TUI apps (Codex/Claude), send_text + send_key enter must be separate.
+        For long prompts (>2000 chars), writes to a temp file to avoid TUI truncation.
         """
         surface_id = self._engine_surfaces.get(engine)
         if not surface_id:
             raise KeyError(f"No surface found for engine: {engine}")
         self.monitor.reset_prompt_tracking(surface_id)
+
+        # For long prompts, write to temp file to avoid TUI input buffer truncation
+        if len(instruction) > 2000:
+            instruction = await self.write_prompt_file(instruction, workdir=self._current_workdir or "")
+
         await self.cmux.send_text(surface_id, instruction)
         await asyncio.sleep(1.0)
         await self.cmux.send_key(surface_id, "enter")
@@ -472,16 +497,38 @@ class CmuxRuntime:
 
     # ---- Browser workspace isolation ----
 
-    async def create_browser_workspace(self, name: str = "browser-verify") -> str:
-        """Create a separate workspace for browser verification."""
+    async def create_utility_workspace(self, name: str = "clab-utility") -> str:
+        """Create a utility workspace with terminal + browser surfaces.
+
+        Terminal surface is used for file operations (prompt files, verification scripts).
+        Browser surface is used for web verification.
+        """
+        if self._utility_workspace_id:
+            return self._utility_workspace_id
+
         ws = await self.cmux.workspace_create(name[:40])
-        self._browser_workspace_id = ws.get("id", ws.get("workspace_id"))
-        logger.info("Browser workspace created: %s", self._browser_workspace_id)
-        return self._browser_workspace_id
+        self._utility_workspace_id = ws.get("id", ws.get("workspace_id"))
+
+        # Create terminal surface for file operations
+        surface = await self.cmux.surface_split("right", self._utility_workspace_id)
+        self._utility_terminal_id = surface.get("surface_id", surface.get("id"))
+
+        # Register in surface registry
+        self.surfaces.register("utility-terminal", self._utility_terminal_id, "shell")
+
+        # Initialize workdir prompt directory
+        workdir = self._current_workdir or "."
+        await self.cmux.send_text(self._utility_terminal_id, f"mkdir -p {workdir}/.clab/prompts")
+        await asyncio.sleep(0.3)
+        await self.cmux.send_key(self._utility_terminal_id, "enter")
+        await asyncio.sleep(0.5)
+
+        logger.info("Utility workspace created: %s (terminal: %s)", self._utility_workspace_id, self._utility_terminal_id)
+        return self._utility_workspace_id
 
     async def browser_interact_isolated(self, url: str) -> dict:
         """Open browser in the isolated browser workspace."""
-        ws_id = self._browser_workspace_id or self.workspace_id
+        ws_id = self._utility_workspace_id or self.workspace_id
         if not self._browser:
             self._browser = CmuxBrowser(self.cmux, ws_id)
             await self._browser.open()

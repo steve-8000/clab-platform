@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import asyncio
 import enum
+import os
 import logging
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -98,17 +100,38 @@ class Worker:
             self.surface_id,
         )
 
+    @staticmethod
+    def _write_prompt_file(instruction: str) -> str:
+        """Write long prompt to project-local file, return reference instruction."""
+        prompt_id = uuid.uuid4().hex[:8]
+        base_dir = os.getcwd()
+        prompt_dir = os.path.join(base_dir, ".clab", "prompts")
+        os.makedirs(prompt_dir, exist_ok=True)
+        prompt_path = os.path.join(prompt_dir, f"{prompt_id}.md")
+        with open(prompt_path, "w") as f:
+            f.write(instruction)
+        logger.info("Prompt file written: %s (%d chars)", prompt_path, len(instruction))
+        return f"Read the file {prompt_path} and execute ALL instructions inside it exactly. Do not summarize — execute them."
+
     async def inject_and_collect(
         self,
         instruction: str,
         timeout: float = 300,
         task_id: str | None = None,
     ) -> TaskResult:
-        """Inject instruction and wait for idle."""
+        """Inject instruction and wait for idle.
+
+        For long prompts (>2000 chars), writes to a temp file to avoid TUI truncation.
+        """
         from .executor import TaskResult
 
         self.state = WorkerState.RUNNING
         self.monitor.reset_prompt_tracking(self.surface_id)
+
+        # For long prompts, write to temp file to avoid TUI input buffer truncation
+        if len(instruction) > 2000:
+            instruction = self._write_prompt_file(instruction)
+
         await self.cmux.send_text(self.surface_id, instruction)
         await asyncio.sleep(1.0)
         await self.cmux.send_key(self.surface_id, "enter")
