@@ -472,12 +472,15 @@ async def get_impact(
     if engine:
         try:
             result = await engine.get_impact_analysis(repo["url"], lookup)
+            direct = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in (result.callers + result.callees)]
+            transitive = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in result.dependents]
+            related_tests = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in result.importers if "test" in str(d).lower()]
             return {
                 "target": result.target,
-                "direct": result.direct,
-                "transitive": result.transitive,
-                "related_tests": result.related_tests,
-                "risk_score": result.risk_score,
+                "direct": direct,
+                "transitive": transitive,
+                "related_tests": related_tests,
+                "risk_score": min(len(direct) * 0.1, 1.0),
             }
         except Exception as exc:
             logger.warning("CGC impact analysis failed, falling back to DB", error=str(exc))
