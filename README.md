@@ -50,7 +50,7 @@ bin/port-forward.sh
 
 # Run agent
 cd local-agent && ./setup.sh && source .venv/bin/activate
-python -m local_agent --workdir ~/my-project "REST API 개발해줘"
+python -m local_agent --parallel --workdir ~/my-project "REST API 개발해줘"
 ```
 
 ### 3. View Dashboard
@@ -68,6 +68,8 @@ Open https://ai.clab.one (or http://localhost:3000 with port-forward)
 | cmux Runtime | Python | `local-agent/local_agent/cmux/` |
 | Dashboard | Next.js | `apps/dashboard/` |
 | MCP Server | Python | `mcp-server/` |
+| Code Intelligence | Python (FastAPI) | `apps/code-intel/` |
+| CodeGraph Adapter | Python | `packages/codegraph/` |
 
 ## Execution Flow
 
@@ -76,6 +78,8 @@ User Goal → Local Agent
   ├── 1. Pre-K: search prior knowledge (→ Knowledge Plane)
   ├── 2. Planner LLM: decompose into task graph
   ├── 3. Execute tasks (parallel or sequential):
+  │     ├── MCP default: parallel mode (3× Codex + 1× Claude reviewer)
+  │     ├── CLI: --parallel flag enables parallel mode
   │     ├── Parallel: WorkerPool (3× Codex workers + Claude reviewer)
   │     │   ├── Codex workers execute in parallel
   │     │   ├── Claude reviewer approves or requests fixes
@@ -88,6 +92,31 @@ User Goal → Local Agent
   └── 6. Return results + artifacts
 ```
 
+## cmux Workspace Model
+
+```
+Orchestrator Workspace (user-facing):
+  └── Claude CLI (orchestrator) + Browser (optional)
+
+Agent Workspace (created per mission):
+  ├── codex-worker-0 ── parallel task execution
+  ├── codex-worker-1 ── parallel task execution
+  ├── codex-worker-2 ── parallel task execution
+  └── claude-reviewer ── review + fix loop
+```
+
+Surface split layout (balanced 2-column grid):
+```
+[main]      [worker-0]
+[worker-1]  [worker-2]
+[reviewer]
+```
+
+- Orchestrator workspace: coordination only, no agent surfaces
+- Agent workspace: all codex/claude work happens here
+- Reasoning (planner/verifier): runs as subprocess, no workspace created
+- cmux notify = trigger, clab review = truth
+
 ## Production Features
 
 - **Checkpointer**: Remote checkpoint storage via Control Plane HTTP API
@@ -96,7 +125,23 @@ User Goal → Local Agent
 - **Retry/Compensation**: LangGraph RetryPolicy + LLM-based replanning
 - **Long-running Resume**: thread_id based checkpoint recovery
 - **Multi-worker**: Worker registry with capability-based scheduling
+- **Parallel Execution**: WorkerPool with balanced cmux surface layout, review loop with max 2 fix rounds
 - **Artifact Lineage**: Audit log + artifact tracking
+
+## MCP Tools
+
+Available via `mcp-server/server.py`:
+
+| Tool | Description |
+|------|-------------|
+| `mission_run` | Run full mission (parallel by default) |
+| `knowledge_pre_k` | Retrieve prior knowledge before work |
+| `knowledge_post_k` | Verify knowledge integrity after work |
+| `knowledge_search` | Search knowledge base |
+| `knowledge_store` | Store decisions/patterns/insights |
+| `platform_health` | Check service health |
+| `session_list` | List agent sessions |
+| `interrupt_list` / `interrupt_resolve` | Human-in-the-loop |
 
 ## Tech Stack
 

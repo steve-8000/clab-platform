@@ -286,20 +286,24 @@ class WorkerPool:
         if self._initialized:
             return
 
-        prev_surface_id: str | None = None
+        surfaces = await self.cmux.surface_list(self.workspace_id)
+        main_surface_id = surfaces[0].get("surface_id", surfaces[0].get("id")) if surfaces else None
+        if not main_surface_id:
+            raise RuntimeError("No main surface found for workspace")
+
+        surface_0 = await self.cmux.surface_split("right", self.workspace_id, main_surface_id)
+        w0_id = surface_0.get("surface_id", surface_0.get("id"))
+
+        surface_1 = await self.cmux.surface_split("down", self.workspace_id, main_surface_id)
+        w1_id = surface_1.get("surface_id", surface_1.get("id"))
+
+        surface_2 = await self.cmux.surface_split("down", self.workspace_id, w0_id)
+        w2_id = surface_2.get("surface_id", surface_2.get("id"))
+
+        worker_surface_ids = [w0_id, w1_id, w2_id]
 
         # Create codex worker surfaces
-        for i in range(self.num_workers):
-            if prev_surface_id is None:
-                surface = await self.cmux.surface_split("right", self.workspace_id)
-            else:
-                surface = await self.cmux.surface_split(
-                    "down", self.workspace_id, prev_surface_id
-                )
-
-            surface_id = surface.get("surface_id", surface.get("id"))
-            prev_surface_id = surface_id
-
+        for i, surface_id in enumerate(worker_surface_ids[:self.num_workers]):
             monitor = CompletionMonitor(self.cmux)
             worker = Worker(
                 worker_id=i,
@@ -325,9 +329,7 @@ class WorkerPool:
         if self._existing_claude_surface_id:
             reviewer_surface_id = self._existing_claude_surface_id
         else:
-            reviewer_surface = await self.cmux.surface_split(
-                "down", self.workspace_id, prev_surface_id
-            )
+            reviewer_surface = await self.cmux.surface_split("down", self.workspace_id, w1_id)
             reviewer_surface_id = reviewer_surface.get(
                 "surface_id", reviewer_surface.get("id")
             )

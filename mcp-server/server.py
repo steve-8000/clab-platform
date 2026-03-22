@@ -81,6 +81,7 @@ async def list_tools():
                     "goal": {"type": "string", "description": "Development goal to achieve"},
                     "workdir": {"type": "string", "description": "Working directory", "default": "."},
                     "llm": {"type": "string", "enum": ["anthropic", "openai"], "default": "anthropic"},
+                    "parallel": {"type": "boolean", "description": "Run with parallel execution", "default": True},
                 },
                 "required": ["goal"],
             },
@@ -198,6 +199,7 @@ async def _mission_run(args: dict):
     goal = args["goal"]
     workdir = args.get("workdir", os.getcwd())
     llm = args.get("llm", "anthropic")
+    parallel = args.get("parallel", True)
 
     # Use local-agent's venv python (not the MCP server's sys.executable)
     venv_python = os.path.join(LOCAL_AGENT_DIR, ".venv", "bin", "python")
@@ -206,8 +208,10 @@ async def _mission_run(args: dict):
         python, "-m", "local_agent",
         "--llm", llm,
         "--workdir", workdir,
-        goal,
     ]
+    if parallel:
+        cmd.append("--parallel")
+    cmd.append(goal)
 
     try:
         proc = subprocess.run(

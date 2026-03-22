@@ -9,6 +9,11 @@ logger = logging.getLogger(__name__)
 
 # Lazy-loaded cmux runtime (shared across invocations within a graph run)
 _cmux_runtime = None
+_WORKSPACE_GOAL_SLICE = 20
+
+
+def _agent_workspace_name(goal: str) -> str:
+    return f"agent-{goal[:_WORKSPACE_GOAL_SLICE]}"
 
 
 async def _get_cmux_runtime():
@@ -45,13 +50,6 @@ async def cleanup_cmux_runtime():
         _cmux_runtime = None
     _cmux_worker_pool = None
 
-    # Reset config-level engine flag
-    try:
-        import local_agent.config as cfg
-        cfg._claude_engine_started = False
-    except Exception:
-        pass
-
 
 async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
     """Execute task using CmuxRuntime. Returns raw output for clab to judge."""
@@ -64,9 +62,8 @@ async def _execute_via_cmux(runtime, state: dict, task: dict) -> dict:
     if not state.get("cmux_workspace_id"):
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         await ProjectBootstrapper().provision(workdir)
-        goal = state.get("goal", "mission")[:30]
-        role = state.get("role_id", "agent")
-        ws_id = await runtime.create_agent(f"{role}-{goal}", workdir=workdir)
+        goal = state.get("goal", "mission")
+        ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
         state["cmux_workspace_id"] = ws_id
 
     # Get or create surface for this engine (reused across tasks)
@@ -251,9 +248,8 @@ async def parallel_executor_node(state: dict) -> dict:
         from local_agent.cmux.bootstrap import ProjectBootstrapper
         workdir = state.get("workdir", ".")
         await ProjectBootstrapper().provision(workdir)
-        goal = state.get("goal", "mission")[:30]
-        role = state.get("role_id", "agent")
-        ws_id = await runtime.create_agent(f"{role}-{goal}", workdir=workdir)
+        goal = state.get("goal", "mission")
+        ws_id = await runtime.create_agent(_agent_workspace_name(goal), workdir=workdir)
         state["cmux_workspace_id"] = ws_id
 
     # Report batch start to Control Plane

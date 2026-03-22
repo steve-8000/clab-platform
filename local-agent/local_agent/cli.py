@@ -18,6 +18,7 @@ def main():
     parser.add_argument("--interrupt", action="store_true", help="Interrupt before each execution")
     parser.add_argument("--interactive", action="store_true", help="Interactive mode")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")
+    parser.add_argument("--parallel", action="store_true", help="Use parallel execution (3 codex workers + 1 claude reviewer)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -40,15 +41,15 @@ def main():
     if args.interactive:
         asyncio.run(interactive_loop(config))
     elif args.goal:
-        asyncio.run(run_goal(args.goal, config))
+        asyncio.run(run_goal(args.goal, config, parallel=args.parallel))
     else:
         parser.print_help()
         sys.exit(1)
 
 
-async def run_goal(goal: str, config):
+async def run_goal(goal: str, config, parallel: bool = False):
     """Run a single goal through the agent graph."""
-    from local_agent.graph.builder import build_agent_graph
+    from local_agent.graph.builder import build_agent_graph, build_parallel_agent_graph
     from local_agent.cp_reporter import CPReporter
 
     # Connect to Control Plane (fail-safe — runs offline if CP unavailable)
@@ -60,7 +61,8 @@ async def run_goal(goal: str, config):
         reporter = None
         thread_id = run_id = None
 
-    graph = build_agent_graph(
+    graph_builder = build_parallel_agent_graph if parallel else build_agent_graph
+    graph = graph_builder(
         interrupt_before_execute=config.interrupt_before_execute,
     )
 
@@ -91,6 +93,7 @@ async def run_goal(goal: str, config):
     print(f"\n🎯 Goal: {goal}")
     print(f"📁 Workdir: {config.workdir}")
     print(f"🤖 LLM: {config.llm_provider}")
+    print(f"⚡ Parallel: {'enabled' if parallel else 'disabled'}")
     if thread_id:
         print(f"📡 CP: thread={thread_id[:8]}... run={run_id[:8]}...")
     else:

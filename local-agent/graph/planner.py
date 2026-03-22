@@ -16,8 +16,11 @@ Output ONLY a JSON array of tasks (no other text):
 
 Rules:
 - Each task should be independently executable by a CLI tool
-- "claude" for complex reasoning, code review, architecture decisions
-- "codex" for straightforward code generation, implementation
+- Always create at least 3 tasks for non-trivial goals
+- Use "codex" engine for code generation, file creation, implementation tasks
+- Use "claude" engine only for architecture decisions, complex reasoning
+- Each task description must be self-contained and include all context needed
+- Tasks in the same wave should be independent of each other
 - Order tasks by dependency (earlier tasks first)
 - Keep tasks focused — one clear objective each
 - Include test/verification tasks when appropriate

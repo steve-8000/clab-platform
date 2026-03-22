@@ -169,13 +169,14 @@ class CmuxRuntime:
         self.cmux = client
         self.monitor = CompletionMonitor(client)
         self.workspace_id: str | None = None
+        self._orchestrator_ws_id: str | None = None
         self.workspace_name: str = ""
         # Engine-level surfaces — ONE surface per engine, reused across tasks
         self.surfaces = SurfaceRegistry()
         self._engine_surfaces: dict[str, str] = {}  # engine → surface_id
         self._engine_lock = asyncio.Lock()  # protects _engine_surfaces + surface creation
         self._browser: CmuxBrowser | None = None
-        self._right_surface_id: str | None = None
+        self._split_targets: list[str] = []
         self._worker_pool: WorkerPool | None = None
         self._utility_workspace_id: str | None = None
         self._utility_terminal_id: str | None = None
@@ -200,14 +201,15 @@ class CmuxRuntime:
                 current = await self.cmux.workspace_current()
                 if current:
                     self.workspace_id = current.get("id", current.get("workspace_id"))
+                    self._orchestrator_ws_id = self.workspace_id
                     self.workspace_name = name
                     self._current_workdir = workdir
+                    self._split_targets = []
                     try:
                         await self.cmux.workspace_rename(name[:40], self.workspace_id)
                     except Exception:
                         pass
-                    logger.info("Reusing current workspace: %s (renamed to %s)", self.workspace_id, name)
-                    return self.workspace_id
+                    logger.info("Reusing current workspace as orchestrator: %s (renamed to %s)", self.workspace_id, name)
             except Exception as exc:
                 logger.debug("Failed to get current workspace: %s", exc)
 
@@ -216,6 +218,7 @@ class CmuxRuntime:
         self.workspace_id = ws.get("id", ws.get("workspace_id"))
         self.workspace_name = name
         self._current_workdir = workdir
+        self._split_targets = []
         logger.info("New workspace created: %s (%s)", self.workspace_id, name)
         return self.workspace_id
 
@@ -244,15 +247,29 @@ class CmuxRuntime:
                 logger.debug("Reusing %s surface: %s", engine, surface_id)
                 return surface_id
 
-            # Create new surface — first one splits RIGHT, second splits DOWN
-            if self._right_surface_id:
-                surface = await self.cmux.surface_split("down", self.workspace_id, self._right_surface_id)
+            if not self._split_targets:
+                surfaces = await self.cmux.surface_list(self.workspace_id)
+                main_surface_id = surfaces[0].get("surface_id", surfaces[0].get("id")) if surfaces else None
+                if not main_surface_id:
+                    raise RuntimeError("No main surface found for workspace")
+                self._split_targets = [main_surface_id]
+
+            split_count = len(self._engine_surfaces)
+            if split_count == 0:
+                target_id = self._split_targets[0]
+                surface = await self.cmux.surface_split("right", self.workspace_id, target_id)
+            elif split_count == 1:
+                target_id = self._split_targets[0]
+                surface = await self.cmux.surface_split("down", self.workspace_id, target_id)
             else:
-                surface = await self.cmux.surface_split("right", self.workspace_id)
+                if len(self._split_targets) < 2:
+                    raise RuntimeError("Right split target missing for workspace")
+                target_id = self._split_targets[1]
+                surface = await self.cmux.surface_split("down", self.workspace_id, target_id)
 
             surface_id = surface.get("surface_id", surface.get("id"))
-            if not self._right_surface_id:
-                self._right_surface_id = surface_id
+            if split_count == 0:
+                self._split_targets.append(surface_id)
 
             self._engine_surfaces[engine] = surface_id
             self.surfaces.register(engine, surface_id, engine)
@@ -273,7 +290,8 @@ class CmuxRuntime:
         """Allocate browser surface — reused across browser tasks."""
         if self._browser and self._browser.surface_id:
             return self._browser.surface_id
-        self._browser = CmuxBrowser(self.cmux, self.workspace_id)
+        ws_id = self._orchestrator_ws_id or self.workspace_id
+        self._browser = CmuxBrowser(self.cmux, ws_id)
         surface_id = await self._browser.open()
         self._engine_surfaces["browser"] = surface_id
         self.surfaces.register("browser", surface_id, "browser")
@@ -534,7 +552,7 @@ class CmuxRuntime:
 
     async def browser_interact_isolated(self, url: str) -> dict:
         """Open browser in the isolated browser workspace."""
-        ws_id = self._utility_workspace_id or self.workspace_id
+        ws_id = self._orchestrator_ws_id or self._utility_workspace_id or self.workspace_id
         if not self._browser:
             self._browser = CmuxBrowser(self.cmux, ws_id)
             await self._browser.open()
@@ -559,8 +577,8 @@ class CmuxRuntime:
                 await self.cmux.surface_close(surface_id)
             except Exception as exc:
                 logger.debug("Failed to close surface %s: %s", surface_id, exc)
-        if surface_id == self._right_surface_id:
-            self._right_surface_id = None
+        if surface_id and surface_id in self._split_targets[1:]:
+            self._split_targets = self._split_targets[:1]
 
     async def shutdown(self) -> None:
         """Release all surfaces, worker pool, browser, and utility workspace."""
