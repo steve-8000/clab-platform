@@ -753,20 +753,19 @@ async def worker_ws(ws: WebSocket):
 
 
 # ---- Events / SSE ----
-@app.get("/threads/{thread_id}/events")
-def thread_events(thread_id: str, since_seq: int = 0) -> StreamingResponse:
-    queue: asyncio.Queue = asyncio.Queue()
-    if thread_id not in sse_queues:
-        sse_queues[thread_id] = []
-    sse_queues[thread_id].append(queue)
+async def _thread_events_handler(request):
+    thread_id = request.path_params["thread_id"]
+    since_seq = int(request.query_params.get("since_seq", "0"))
 
     backlog = store.list_events(thread_id, since_seq=since_seq, limit=500)
 
-    async def event_generator():
+    async def stream():
+        q = asyncio.Queue()
+        sse_queues.setdefault(thread_id, []).append(q)
         try:
             for raw in backlog:
                 event = _as_jsonable(raw) or {}
-                shaped = {
+                yield {"data": json.dumps({
                     "event_id": event.get("id"),
                     "thread_id": event.get("thread_id"),
                     "run_id": event.get("run_id"),
@@ -774,24 +773,21 @@ def thread_events(thread_id: str, since_seq: int = 0) -> StreamingResponse:
                     "seq": event.get("seq"),
                     "ts": event.get("ts"),
                     "payload": event.get("payload", {}),
-                }
-                yield f"data: {json.dumps(shaped)}\n\n"
-
+                })}
             while True:
                 event = await queue.get()
-                yield f"data: {json.dumps(event)}\n\n"
+                yield {"data": json.dumps(event)}
         except asyncio.CancelledError:
             pass
         finally:
-            sse_queues[thread_id].remove(queue)
+            if thread_id in sse_queues and q in sse_queues[thread_id]:
+                sse_queues[thread_id].remove(q)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return EventSourceResponse(stream())
 
-
-@app.get("/events/{session_id}")
-def session_events(session_id: str, since_seq: int = 0) -> StreamingResponse:
-    # Legacy alias
-    return thread_events(session_id, since_seq=since_seq)
+async def _session_events_handler(request):
+    request.path_params["thread_id"] = request.path_params["session_id"]
+    return await _thread_events_handler(request)
 
 
 # SSE endpoint - registered directly on FastAPI
@@ -831,6 +827,8 @@ async def _test_sse(request):
 from starlette.routing import Route as _SRoute
 app.router.routes.insert(0, _SRoute("/events/test", _test_sse))
 app.router.routes.insert(0, _SRoute("/events/runtime", _runtime_events_handler))
+app.router.routes.insert(0, _SRoute("/threads/{thread_id}/events", _thread_events_handler))
+app.router.routes.insert(0, _SRoute("/events/{session_id}", _session_events_handler))
 
 
 # ---- Artifacts / Audit ----
@@ -898,6 +896,8 @@ class CreateScheduleRequest(BaseModel):
     cron_expression: str
     command_type: str = "prompt"
     payload: dict | None = None
+    workspace_id: str | None = None
+    surface_id: str | None = None
 
 class UpdateScheduleRequest(BaseModel):
     name: str | None = None
@@ -914,7 +914,13 @@ async def list_schedules(worker_id: str | None = None):
 @app.post("/schedules")
 async def create_schedule(req: CreateScheduleRequest):
     job = await store.create_scheduled_job(
-        req.worker_id, req.name, req.cron_expression, req.command_type, req.payload or {}
+        req.worker_id,
+        req.name,
+        req.cron_expression,
+        req.command_type,
+        req.payload or {},
+        req.workspace_id,
+        req.surface_id,
     )
     return _as_jsonable(job)
 

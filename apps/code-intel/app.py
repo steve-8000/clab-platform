@@ -40,6 +40,22 @@ from .models import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def _detect_language(file_path: str) -> str:
+    """Detect language from file extension."""
+    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+    return {
+        "py": "python", "go": "go", "ts": "typescript", "tsx": "typescript",
+        "js": "javascript", "jsx": "javascript", "rs": "rust", "java": "java",
+        "rb": "ruby", "php": "php", "c": "c", "cpp": "cpp", "h": "c",
+        "cs": "csharp", "swift": "swift", "kt": "kotlin", "md": "markdown",
+    }.get(ext, ext or "unknown")
+
+
+def _repo_local_path(repo_url: str, repo_id: str) -> str:
+    """Local clone path for a repo."""
+    return os.path.join("/app/repos", repo_id)
 REPOS_DIR = "/app/repos"
 
 # ---------------------------------------------------------------------------
@@ -355,14 +371,36 @@ async def _run_indexing(
         completed = datetime.now(timezone.utc)
         duration_ms = int((completed - now).total_seconds() * 1000)
 
+        # Persist symbols to DB
+        node_count = 0
+        edge_count = 0
+        try:
+            symbols = await engine.search_symbols(local_path, "", limit=5000)
+            for sym in symbols:
+                sym_id = str(uuid.uuid4())
+                lang = sym.language or _detect_language(sym.file_path)
+                fq = sym.name if not sym.file_path else f"{sym.file_path}::{sym.name}"
+                await db.execute(
+                    """INSERT INTO ci_symbol_nodes (id, snapshot_id, fq_name, name, kind, file_path, line_number, language, metadata)
+                    VALUES ($1, $2, $3, $4, $5::symbol_kind, $6, $7, $8, '{}'::jsonb)
+                    ON CONFLICT DO NOTHING""",
+                    sym_id, snapshot_id, fq, sym.name,
+                    sym.kind if sym.kind in ("function","class","module","variable") else "function",
+                    sym.file_path, sym.line_number, lang,
+                )
+                node_count += 1
+            logger.info("Persisted symbols", count=node_count, snapshot_id=snapshot_id)
+        except Exception as exc:
+            logger.warning("Failed to persist symbols", error=str(exc))
+
         await db.execute(
             """UPDATE ci_graph_builds
             SET status = 'COMPLETED', completed_at = $2, duration_ms = $3,
                 node_count = $4, edge_count = $5
             WHERE id = $1""",
-            build_id, completed, duration_ms, 0, 0,
+            build_id, completed, duration_ms, node_count, edge_count,
         )
-        logger.info("Indexing completed", build_id=build_id, status=result.status, message=result.message)
+        logger.info("Indexing completed", build_id=build_id, status=result.status, nodes=node_count)
     except Exception as exc:
         await db.execute(
             """UPDATE ci_graph_builds
@@ -561,15 +599,17 @@ async def get_impact(
     if engine:
         try:
             result = await engine.get_impact_analysis(_repo_local_path(repo["url"], repo_id), lookup)
-            direct = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in (result.callers + result.callees)]
-            transitive = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in result.dependents]
+            callers_list = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in result.callers]
+            callees_list = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in result.callees]
+            direct = callers_list
+            transitive = callees_list + [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in result.dependents]
             related_tests = [d.get("name", str(d)) if isinstance(d, dict) else str(d) for d in result.importers if "test" in str(d).lower()]
             return {
                 "target": result.target,
                 "direct": direct,
                 "transitive": transitive,
                 "related_tests": related_tests,
-                "risk_score": min(len(direct) * 0.1, 1.0),
+                "risk_score": min((len(callers_list) + len(callees_list)) * 0.1, 1.0),
             }
         except Exception as exc:
             logger.warning("CGC impact analysis failed, falling back to DB", error=str(exc))
@@ -642,7 +682,7 @@ async def get_impact(
     }
 
 
-@app.get("/repositories/{repo_id}/hotspots", response_model=HotspotResponse)
+@app.get("/repositories/{repo_id}/hotspots")
 async def get_hotspots(
     repo_id: str,
     metric: str = Query("complexity", description="Metric type"),
@@ -658,7 +698,7 @@ async def get_hotspots(
     if engine:
         try:
             hotspots = await engine.get_complexity_signals(_repo_local_path(repo["url"], repo_id), limit=limit)
-            return {"hotspots": hotspots[:limit]}
+            import dataclasses; return {"hotspots": [dataclasses.asdict(h) if dataclasses.is_dataclass(h) else h for h in hotspots[:limit]]}
         except Exception as exc:
             logger.warning("CGC hotspots failed, falling back to DB", error=str(exc))
 
