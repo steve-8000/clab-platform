@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse, Response
+from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
 
 from .runtime_store import RuntimeStore
@@ -806,28 +807,26 @@ async def runtime_events_sse(worker_id: str | None = None):
             while True:
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=15)
-                    yield f"data: {json.dumps(event)}\n\n"
+                    yield {"data": json.dumps(event)}
                 except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
+                    yield {"comment": "keepalive"}
         except asyncio.CancelledError:
             pass
         finally:
             if scope in runtime_sse_queues and q in runtime_sse_queues[scope]:
                 runtime_sse_queues[scope].remove(q)
 
-    from starlette.responses import StreamingResponse as _SR
-    return _SR(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    return EventSourceResponse(stream())
 
 
 @app.get("/events/test")
 async def test_sse():
     async def gen():
-        yield "data: hello\n\n"
+        yield {"data": "hello"}
         for i in range(100):
             await asyncio.sleep(2)
-            yield f"data: tick {i}\n\n"
-    from starlette.responses import StreamingResponse as _SR
-    return _SR(gen(), media_type="text/event-stream")
+            yield {"data": f"tick {i}"}
+    return EventSourceResponse(gen())
 
 
 # ---- Artifacts / Audit ----
