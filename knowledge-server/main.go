@@ -68,6 +68,13 @@ func main() {
 			"service": "memory-gateway",
 		})
 	})
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"status":  "ok",
+			"service": "memory-gateway",
+		})
+	})
 
 	log.Printf("memory-gateway listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, r))
