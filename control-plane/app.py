@@ -795,25 +795,30 @@ def session_events(session_id: str, since_seq: int = 0) -> StreamingResponse:
 
 @app.get("/events/runtime")
 def runtime_events(worker_id: str | None = None) -> StreamingResponse:
-    scope = worker_id or "__all__"
+    import time as _time
 
     async def stream():
-        q: asyncio.Queue = asyncio.Queue()
-        runtime_sse_queues.setdefault(scope, []).append(q)
-        try:
-            while True:
-                try:
-                    event = await asyncio.wait_for(q.get(), timeout=30)
-                    yield f"data: {json.dumps(event)}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
-        except asyncio.CancelledError:
-            pass
-        finally:
-            if scope in runtime_sse_queues and q in runtime_sse_queues[scope]:
-                runtime_sse_queues[scope].remove(q)
+        last_keepalive = _time.monotonic()
+        while True:
+            await asyncio.sleep(2)
+            # Check for pending events from SSE queues
+            scope = worker_id or "__all__"
+            events_to_send = []
+            for q_list in [runtime_sse_queues.get(scope, []), runtime_sse_queues.get("__all__", [])]:
+                for q in q_list:
+                    while not q.empty():
+                        try:
+                            events_to_send.append(q.get_nowait())
+                        except asyncio.QueueEmpty:
+                            break
+            for event in events_to_send:
+                yield f"data: {json.dumps(event)}\n\n"
+            # Keepalive every 15s
+            if _time.monotonic() - last_keepalive > 15:
+                yield ": keepalive\n\n"
+                last_keepalive = _time.monotonic()
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ---- Artifacts / Audit ----
