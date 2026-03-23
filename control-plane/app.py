@@ -820,7 +820,15 @@ async def _runtime_events_handler(request):
 
 from starlette.applications import Starlette as _StarletteApp
 from starlette.routing import Route as _Route
-_sse_app = _StarletteApp(routes=[_Route("/runtime", _runtime_events_handler)])
+async def _test_sse_handler(request):
+    async def gen():
+        yield "data: hello\n\n"
+        for i in range(100):
+            await asyncio.sleep(2)
+            yield f"data: tick {i}\n\n"
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+_sse_app = _StarletteApp(routes=[_Route("/runtime", _runtime_events_handler), _Route("/test", _test_sse_handler)])
 app.mount("/events", _sse_app)
 
 
