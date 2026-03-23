@@ -22,6 +22,7 @@ registry = WorkerRegistry()
 
 # SSE subscribers: thread_id -> list[Queue[event]]
 sse_queues: dict[str, list[asyncio.Queue]] = {}
+runtime_sse_queues: dict[str, list[asyncio.Queue]] = {}
 
 # Interrupt futures: interrupt_id -> Future[str]
 interrupt_futures: dict[str, asyncio.Future] = {}
@@ -71,6 +72,27 @@ def _format_session(thread: dict, run: dict | None) -> dict:
 def _push_sse(thread_id: str, event: dict):
     for q in sse_queues.get(thread_id, []):
         q.put_nowait(event)
+
+
+def _push_runtime_sse(scope: str, event: dict):
+    for q in runtime_sse_queues.get(scope, []):
+        q.put_nowait(event)
+    for q in runtime_sse_queues.get("__all__", []):
+        q.put_nowait(event)
+
+
+def _publish_dispatch_event(worker_id: str, dispatch: dict | None, event_type: str):
+    dispatch_payload = _as_jsonable(dispatch)
+    if not dispatch_payload:
+        return
+    _push_runtime_sse(
+        worker_id,
+        {
+            "type": event_type,
+            "worker_id": worker_id,
+            "dispatch": dispatch_payload,
+        },
+    )
 
 
 def _normalize_status(value: str | None) -> str | None:
@@ -160,6 +182,27 @@ class UpdateSessionRequest(BaseModel):
     status: str | None = None
     current_task: str | None = None
     step: int | None = None
+
+
+class DispatchMissionRequest(BaseModel):
+    worker_id: str
+    goal: str
+    workdir: str = "."
+    parallel: bool = True
+    workspace_id: str | None = None
+
+
+class DispatchPromptRequest(BaseModel):
+    worker_id: str
+    surface_id: str
+    prompt: str
+    workspace_id: str | None = None
+
+
+class DispatchCancelRequest(BaseModel):
+    worker_id: str
+    workspace_id: str | None = None
+    run_id: str | None = None
 
 
 # ---- Thread / Run APIs ----
@@ -412,6 +455,107 @@ def list_workers():
     return registry.list_all()
 
 
+@app.get("/workspaces")
+async def list_workspaces(worker_id: str | None = None):
+    rows = await store.list_workspaces(worker_id)
+    return [_as_jsonable(r) for r in rows]
+
+
+@app.get("/workspaces/{workspace_id}")
+async def get_workspace(workspace_id: str):
+    ws_row = await store.get_workspace(workspace_id)
+    ws = _as_jsonable(ws_row)
+    if not ws:
+        raise HTTPException(404)
+    surfaces = await store.list_surfaces(workspace_id)
+    ws["surfaces"] = [_as_jsonable(s) for s in surfaces]
+    return _as_jsonable(ws)
+
+
+@app.get("/workspaces/{workspace_id}/surfaces")
+async def list_surfaces(workspace_id: str):
+    return [_as_jsonable(s) for s in await store.list_surfaces(workspace_id)]
+
+
+@app.get("/workers/{worker_id}/workspaces")
+async def worker_workspaces(worker_id: str):
+    return [_as_jsonable(r) for r in await store.list_workspaces(worker_id)]
+
+
+@app.post("/dispatch/mission")
+async def dispatch_mission(req: DispatchMissionRequest):
+    cmd = await store.create_dispatch(
+        worker_id=req.worker_id,
+        command_type="mission",
+        payload={"goal": req.goal, "workdir": req.workdir, "parallel": req.parallel},
+        workspace_id=req.workspace_id,
+    )
+    sent = await registry.send_command(req.worker_id, {
+        "type": "command.dispatch",
+        "command_id": cmd["id"],
+        "command_type": "mission",
+        "payload": cmd["payload"],
+    })
+    status = "sent" if sent else "queued"
+    dispatch = await store.update_dispatch_status(cmd["id"], status)
+    _publish_dispatch_event(req.worker_id, dispatch, "dispatch.updated")
+    return _as_jsonable(await store.get_dispatch(cmd["id"]))
+
+
+@app.post("/dispatch/prompt")
+async def dispatch_prompt(req: DispatchPromptRequest):
+    cmd = await store.create_dispatch(
+        worker_id=req.worker_id,
+        command_type="prompt",
+        payload={"prompt": req.prompt, "surface_id": req.surface_id},
+        workspace_id=req.workspace_id,
+        surface_id=req.surface_id,
+    )
+    sent = await registry.send_command(req.worker_id, {
+        "type": "command.dispatch",
+        "command_id": cmd["id"],
+        "command_type": "prompt",
+        "payload": cmd["payload"],
+    })
+    status = "sent" if sent else "queued"
+    dispatch = await store.update_dispatch_status(cmd["id"], status)
+    _publish_dispatch_event(req.worker_id, dispatch, "dispatch.updated")
+    return _as_jsonable(await store.get_dispatch(cmd["id"]))
+
+
+@app.post("/dispatch/cancel")
+async def dispatch_cancel(req: DispatchCancelRequest):
+    cmd = await store.create_dispatch(
+        worker_id=req.worker_id,
+        command_type="cancel",
+        payload={"workspace_id": req.workspace_id, "run_id": req.run_id},
+        workspace_id=req.workspace_id,
+    )
+    sent = await registry.send_command(req.worker_id, {
+        "type": "command.cancel",
+        "command_id": cmd["id"],
+        "payload": cmd["payload"],
+    })
+    status = "sent" if sent else "queued"
+    dispatch = await store.update_dispatch_status(cmd["id"], status)
+    _publish_dispatch_event(req.worker_id, dispatch, "dispatch.updated")
+    return _as_jsonable(await store.get_dispatch(cmd["id"]))
+
+
+@app.get("/dispatches")
+async def list_dispatches(worker_id: str | None = None, status: str | None = None):
+    return [_as_jsonable(r) for r in await store.list_dispatches(worker_id, status)]
+
+
+@app.get("/dispatches/{command_id}")
+async def get_dispatch(command_id: str):
+    dispatch = await store.get_dispatch(command_id)
+    d = _as_jsonable(dispatch)
+    if not d:
+        raise HTTPException(404)
+    return d
+
+
 @app.websocket("/ws/worker")
 async def worker_ws(ws: WebSocket):
     await ws.accept()
@@ -423,7 +567,25 @@ async def worker_ws(ws: WebSocket):
             await ws.close(4001, "Expected register")
             return
         worker_id = msg.get("worker_id", "unknown")
-        registry.register(worker_id, ws, msg.get("capabilities", []), msg.get("workdir", "."))
+        worker = registry.register(
+            worker_id,
+            ws,
+            msg.get("capabilities", []),
+            msg.get("workdir", "."),
+            hostname=msg.get("hostname", ""),
+            platform=msg.get("platform", ""),
+            version=msg.get("version", ""),
+        )
+        await store.upsert_worker(
+            worker_id=worker_id,
+            hostname=worker.hostname,
+            platform=worker.platform,
+            capabilities=worker.capabilities,
+            workdir=worker.workdir,
+            status="online",
+            version=worker.version,
+        )
+        _push_runtime_sse(worker_id, {"type": "worker.connected", "worker_id": worker_id})
 
         while True:
             raw = await ws.receive_text()
@@ -432,6 +594,7 @@ async def worker_ws(ws: WebSocket):
 
             if msg_type == "heartbeat":
                 registry.heartbeat(worker_id)
+                await store.update_worker_heartbeat(worker_id)
                 continue
 
             if msg_type == "state_update":
@@ -525,15 +688,71 @@ async def worker_ws(ws: WebSocket):
                 )
                 continue
 
+            if msg_type == "cmux.snapshot":
+                await store.delete_workspaces_for_worker(worker_id)
+                for ws_data in msg.get("workspaces", []):
+                    ws_id = f"{worker_id}_{ws_data['workspace_id']}"
+                    await store.upsert_workspace(
+                        id=ws_id,
+                        worker_id=worker_id,
+                        workspace_id=ws_data["workspace_id"],
+                        name=ws_data.get("name", ""),
+                        role=ws_data.get("role", "agent"),
+                        status=ws_data.get("status", "idle"),
+                        current_thread_id=ws_data.get("thread_id"),
+                        current_run_id=ws_data.get("run_id"),
+                    )
+                    for sf_data in ws_data.get("surfaces", []):
+                        sf_id = f"{worker_id}_{sf_data['surface_id']}"
+                        await store.upsert_surface(
+                            id=sf_id,
+                            worker_id=worker_id,
+                            workspace_id=ws_id,
+                            surface_id=sf_data["surface_id"],
+                            name=sf_data.get("name", ""),
+                            role=sf_data.get("role", "worker"),
+                            engine=sf_data.get("engine", "codex"),
+                            status=sf_data.get("status", "idle"),
+                            last_output_excerpt=sf_data.get("last_output_excerpt", ""),
+                        )
+                _push_runtime_sse(worker_id, {"type": "workspace.snapshot", "worker_id": worker_id})
+                continue
+
+            if msg_type == "command.ack":
+                command_id = msg.get("command_id")
+                if command_id:
+                    dispatch = await store.update_dispatch_status(command_id, "acked")
+                    _publish_dispatch_event(worker_id, dispatch, "dispatch.acked")
+                continue
+
+            if msg_type == "command.result":
+                command_id = msg.get("command_id")
+                if command_id:
+                    result_status = msg.get("status", "completed")
+                    result = await store.create_dispatch_result(command_id, result_status, msg.get("payload", {}))
+                    dispatch = await store.update_dispatch_status(command_id, result_status)
+                    _push_runtime_sse(
+                        worker_id,
+                        {
+                            "type": "dispatch.result",
+                            "worker_id": worker_id,
+                            "dispatch": _as_jsonable(dispatch),
+                            "result": _as_jsonable(result),
+                        },
+                    )
+                continue
+
     except WebSocketDisconnect:
         pass
     finally:
         if worker_id:
+            await store.update_worker_status(worker_id, "offline")
+            _push_runtime_sse(worker_id, {"type": "worker.disconnected", "worker_id": worker_id})
             registry.unregister(worker_id)
 
 
 # ---- Events / SSE ----
-@app.get("/threads/{thread_id}/events")
+@app.get("/threads/{thread_id}/events", response_class=StreamingResponse)
 async def thread_events(thread_id: str, since_seq: int = 0):
     queue: asyncio.Queue = asyncio.Queue()
     if thread_id not in sse_queues:
@@ -568,10 +787,32 @@ async def thread_events(thread_id: str, since_seq: int = 0):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@app.get("/events/{session_id}")
+@app.get("/events/{session_id}", response_class=StreamingResponse)
 async def session_events(session_id: str, since_seq: int = 0):
     # Legacy alias
-    return await thread_events(session_id, since_seq=since_seq)
+    return thread_events(session_id, since_seq=since_seq)
+
+
+@app.get("/events/runtime", response_class=StreamingResponse)
+async def runtime_events(worker_id: str | None = None):
+    scope = worker_id or "__all__"
+    q: asyncio.Queue = asyncio.Queue()
+    runtime_sse_queues.setdefault(scope, []).append(q)
+
+    async def stream():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=30)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            runtime_sse_queues[scope].remove(q)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 # ---- Artifacts / Audit ----
@@ -628,5 +869,4 @@ def health():
         "status": "ok",
         "service": "control-plane",
         **stats,
-        "workers": len(registry.workers),
     }
