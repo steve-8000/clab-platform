@@ -371,11 +371,21 @@ async def _run_indexing(
         completed = datetime.now(timezone.utc)
         duration_ms = int((completed - now).total_seconds() * 1000)
 
-        # Persist symbols to DB
+        # Persist symbols to DB — multi-query for full coverage
         node_count = 0
         edge_count = 0
+        seen_names = set()
         try:
-            symbols = await engine.search_symbols(local_path, "", limit=5000)
+            all_symbols = []
+            for letter in "abcdefghijklmnopqrstuvwxyz_ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                batch = await engine.search_symbols(local_path, letter, limit=200)
+                for sym in batch:
+                    key = f"{sym.name}:{sym.file_path}:{sym.line_number}"
+                    if key not in seen_names:
+                        seen_names.add(key)
+                        all_symbols.append(sym)
+            symbols = all_symbols
+            logger.info("Collected symbols for indexing", total=len(symbols))
             for sym in symbols:
                 sym_id = str(uuid.uuid4())
                 lang = sym.language or _detect_language(sym.file_path)
