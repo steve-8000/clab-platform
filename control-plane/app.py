@@ -763,11 +763,12 @@ async def _thread_events_handler(request):
         backlog = store.list_events(thread_id, since_seq=since_seq, limit=500)
         max_seq = since_seq
         for raw in backlog:
-            event = _as_jsonable(raw) or {}
-            seq = event.get("seq", 0) or 0
-            if seq > max_seq:
-                max_seq = seq
-            yield {"data": json.dumps({
+            try:
+                event = _as_jsonable(raw) or {}
+                seq = event.get("seq", 0) or 0
+                if seq > max_seq:
+                    max_seq = seq
+                yield {"data": json.dumps({
                 "event_id": event.get("id"),
                 "thread_id": event.get("thread_id"),
                 "run_id": event.get("run_id"),
@@ -776,6 +777,8 @@ async def _thread_events_handler(request):
                 "ts": event.get("ts"),
                 "payload": event.get("payload", {}),
             })}
+            except Exception:
+                continue
 
         # Poll for new events
         last_keepalive = _time.monotonic()
