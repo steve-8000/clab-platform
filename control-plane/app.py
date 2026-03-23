@@ -793,20 +793,34 @@ def session_events(session_id: str, since_seq: int = 0) -> StreamingResponse:
     return thread_events(session_id, since_seq=since_seq)
 
 
-@app.get("/events/runtime", response_model=None)
-async def runtime_events(worker_id: str | None = None):
+from starlette.routing import Route
+
+async def _runtime_events_handler(request):
     import time as _time
+    worker_id = request.query_params.get("worker_id")
+    scope = worker_id or "__all__"
 
     async def stream():
+        q = asyncio.Queue()
+        runtime_sse_queues.setdefault(scope, []).append(q)
         last_keepalive = _time.monotonic()
-        while True:
-            await asyncio.sleep(2)
-            # Keepalive every 15s
-            if _time.monotonic() - last_keepalive > 15:
-                yield ": keepalive\n\n"\n\n"
-                last_keepalive = _time.monotonic()
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=15)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    last_keepalive = _time.monotonic()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if scope in runtime_sse_queues and q in runtime_sse_queues[scope]:
+                runtime_sse_queues[scope].remove(q)
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+app.routes.append(Route("/events/runtime", _runtime_events_handler))
 
 
 # ---- Artifacts / Audit ----
