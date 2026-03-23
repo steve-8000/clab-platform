@@ -795,8 +795,8 @@ def session_events(session_id: str, since_seq: int = 0) -> StreamingResponse:
 
 
 # SSE endpoint - registered directly on FastAPI
-@app.get("/events/runtime")
-async def runtime_events_sse(worker_id: str | None = None):
+async def _runtime_events_handler(request):
+    worker_id = request.query_params.get("worker_id")
     import time as _time
     scope = worker_id or "__all__"
 
@@ -819,14 +819,18 @@ async def runtime_events_sse(worker_id: str | None = None):
     return EventSourceResponse(stream())
 
 
-@app.get("/events/test")
-async def test_sse():
+# Test SSE - raw starlette route
+async def _test_sse(request):
     async def gen():
         yield {"data": "hello"}
         for i in range(100):
             await asyncio.sleep(2)
             yield {"data": f"tick {i}"}
     return EventSourceResponse(gen())
+
+from starlette.routing import Route as _SRoute
+app.router.routes.insert(0, _SRoute("/events/test", _test_sse))
+app.router.routes.insert(0, _SRoute("/events/runtime", _runtime_events_handler))
 
 
 # ---- Artifacts / Audit ----
