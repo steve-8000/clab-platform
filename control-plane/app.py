@@ -825,14 +825,9 @@ async def _test_sse(request):
     return EventSourceResponse(gen())
 
 from starlette.routing import Route as _SRoute
-from starlette.applications import Starlette as _SApp
-
-_sse_app = _SApp(routes=[
-    _SRoute("/test", _test_sse),
-    _SRoute("/runtime", _runtime_events_handler),
-    _SRoute("/thread/{thread_id}", _thread_events_handler),
-])
-app.mount("/events", _sse_app)
+app.router.routes.insert(0, _SRoute("/events/test", _test_sse))
+app.router.routes.insert(0, _SRoute("/events/runtime", _runtime_events_handler))
+app.router.routes.insert(0, _SRoute("/events/thread/{thread_id}", _thread_events_handler))
 
 
 # ---- Artifacts / Audit ----
