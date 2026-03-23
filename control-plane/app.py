@@ -796,10 +796,10 @@ def session_events(session_id: str, since_seq: int = 0) -> StreamingResponse:
 @app.get("/events/runtime")
 def runtime_events(worker_id: str | None = None) -> StreamingResponse:
     scope = worker_id or "__all__"
-    q: asyncio.Queue = asyncio.Queue()
-    runtime_sse_queues.setdefault(scope, []).append(q)
 
     async def stream():
+        q: asyncio.Queue = asyncio.Queue()
+        runtime_sse_queues.setdefault(scope, []).append(q)
         try:
             while True:
                 try:
@@ -810,7 +810,8 @@ def runtime_events(worker_id: str | None = None) -> StreamingResponse:
         except asyncio.CancelledError:
             pass
         finally:
-            runtime_sse_queues[scope].remove(q)
+            if scope in runtime_sse_queues and q in runtime_sse_queues[scope]:
+                runtime_sse_queues[scope].remove(q)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
 
