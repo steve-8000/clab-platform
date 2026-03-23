@@ -93,7 +93,7 @@ export const cp = {
     const qs = threadId ? `?thread_id=${threadId}` : "";
     return fetchJSON<Artifact[]>(`${CONTROL_PLANE_URL}/artifacts${qs}`);
   },
-  eventsUrl: (threadId: string) => `${CONTROL_PLANE_URL}/threads/${threadId}/events`,
+  eventsUrl: (threadId: string) => `${CONTROL_PLANE_URL}/events/thread/${threadId}`,
   runtimeEventsUrl: (workerId?: string) =>
     `${CONTROL_PLANE_URL}/events/runtime${workerId ? `?worker_id=${encodeURIComponent(workerId)}` : ""}`,
   schedules: (workerId?: string) =>

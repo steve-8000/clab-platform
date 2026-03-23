@@ -10,7 +10,7 @@ export function useSSE(threadId: string | null) {
 
   useEffect(() => {
     if (!threadId) return;
-    const url = `${CONTROL_PLANE_URL}/threads/${threadId}/events`;
+    const url = `${CONTROL_PLANE_URL}/events/thread/${threadId}`;
     const es = new EventSource(url);
     esRef.current = es;
 
@@ -51,7 +51,7 @@ export function useGlobalEvents() {
         // Get events from the most recent thread
         if (threads.length > 0) {
           const latest = threads[0];
-          const evRes = await fetch(`${CONTROL_PLANE_URL}/threads/${latest.id}/events`);
+          const evRes = await fetch(`${CONTROL_PLANE_URL}/events/thread/${latest.id}`);
           // SSE not suitable for polling — just mark as loaded
         }
       } catch {}
