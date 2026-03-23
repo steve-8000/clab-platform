@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 
 function CountBadge({ count }: { count: number }) {
   return (
-    <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs text-gray-300">
+    <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-xs text-neutral-300">
       {count}
     </span>
   );
@@ -23,7 +23,7 @@ export default function ImpactAnalysisPage() {
     <div className="space-y-6">
       <div className="space-y-2">
         <h1 className="text-2xl font-bold">Impact Analysis</h1>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-neutral-500">
           Analyze the impact of changes to symbols and files
         </p>
       </div>
@@ -32,7 +32,7 @@ export default function ImpactAnalysisPage() {
         <select
           value={selectedRepo}
           onChange={(event) => setSelectedRepo(event.target.value)}
-          className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-2"
+          className="rounded-lg border border-white/[0.06] bg-neutral-950 px-4 py-2"
           disabled={repositoriesLoading}
         >
           <option value="">Select repository</option>
@@ -47,13 +47,13 @@ export default function ImpactAnalysisPage() {
           value={target}
           onChange={(event) => setTarget(event.target.value)}
           placeholder="Enter symbol or file path"
-          className="min-w-0 flex-1 rounded-lg border border-gray-800 bg-gray-900 px-4 py-2"
+          className="min-w-0 flex-1 rounded-lg border border-white/[0.06] bg-neutral-950 px-4 py-2"
         />
 
         <button
           type="button"
           onClick={() => analyze()}
-          className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-2 text-sm font-medium"
+          className="rounded-lg border border-white/[0.06] bg-neutral-950 px-4 py-2 text-sm font-medium"
           disabled={!selectedRepo || !target.trim() || loading}
         >
           {loading ? "Running..." : "Run Analysis"}
@@ -62,9 +62,9 @@ export default function ImpactAnalysisPage() {
 
       {loading ? (
         <div className="space-y-4">
-          <div className="h-28 animate-pulse rounded-lg bg-gray-900" />
-          <div className="h-48 animate-pulse rounded-lg bg-gray-900" />
-          <div className="h-40 animate-pulse rounded-lg bg-gray-900" />
+          <div className="h-28 animate-pulse rounded-lg bg-neutral-950" />
+          <div className="h-48 animate-pulse rounded-lg bg-neutral-950" />
+          <div className="h-40 animate-pulse rounded-lg bg-neutral-950" />
         </div>
       ) : !impact ? (
         <EmptyState
@@ -77,15 +77,15 @@ export default function ImpactAnalysisPage() {
             <div className="flex items-center gap-2">
               <h2 className="text-xl font-semibold">Overview</h2>
             </div>
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-6">
+            <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-6">
               <div className="flex items-start justify-between gap-4">
                 <div className="space-y-1">
-                  <p className="text-sm text-gray-500">Target</p>
-                  <p className="font-mono text-sm text-gray-200">{impact.target}</p>
+                  <p className="text-sm text-neutral-500">Target</p>
+                  <p className="font-mono text-sm text-neutral-200">{impact.target}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm text-gray-500">Risk Score</p>
-                  <p className="text-3xl font-bold text-gray-100">{impact.risk_score}</p>
+                  <p className="text-sm text-neutral-500">Risk Score</p>
+                  <p className="text-3xl font-bold text-white">{impact.risk_score}</p>
                 </div>
               </div>
             </div>
@@ -105,9 +105,9 @@ export default function ImpactAnalysisPage() {
                 impact.direct.map((item, index) => (
                   <div
                     key={`${item}-${index}`}
-                    className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-2"
+                    className="rounded-lg border border-white/[0.06] bg-neutral-950 px-4 py-2"
                   >
-                    <p className="font-mono text-sm text-gray-200">{item}</p>
+                    <p className="font-mono text-sm text-neutral-200">{item}</p>
                   </div>
                 ))
               )}
@@ -126,9 +126,9 @@ export default function ImpactAnalysisPage() {
                 impact.transitive.map((item, index) => (
                   <div
                     key={`${item}-${index}`}
-                    className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-2"
+                    className="rounded-lg border border-white/[0.06] bg-neutral-950 px-4 py-2"
                   >
-                    <p className="font-mono text-sm text-gray-200">{item}</p>
+                    <p className="font-mono text-sm text-neutral-200">{item}</p>
                   </div>
                 ))
               )}
@@ -147,9 +147,9 @@ export default function ImpactAnalysisPage() {
                 impact.related_tests.map((test, index) => (
                   <div
                     key={`${test}-${index}`}
-                    className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-2"
+                    className="rounded-lg border border-white/[0.06] bg-neutral-950 px-4 py-2"
                   >
-                    <p className="text-sm text-gray-200">{test}</p>
+                    <p className="text-sm text-neutral-200">{test}</p>
                   </div>
                 ))
               )}

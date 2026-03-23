@@ -19,7 +19,12 @@ export default function InterruptsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Interrupts</h1>
+      <div>
+        <h1 className="text-2xl font-bold">Interrupts</h1>
+        <p className="mt-1 text-sm text-neutral-500">
+          Human-in-the-loop requests from agents. Resolve pending interrupts to unblock execution.
+        </p>
+      </div>
 
       {/* Pending */}
       <div>
@@ -27,9 +32,13 @@ export default function InterruptsPage() {
           Pending ({pending.length})
         </h2>
         {pending.length === 0 ? (
-          <EmptyState title="No pending interrupts" description="Agents will create interrupts when human input is needed" />
+          <EmptyState
+            title="No pending interrupts"
+            description="No pending interrupts. Agents create interrupts when they need human decisions or approvals."
+          />
         ) : (
           <div className="space-y-3">
+            <p className="text-sm text-neutral-500">Pending items need a response value before the blocked agent can continue.</p>
             {pending.map((intr) => (
               <div
                 key={intr.id}
@@ -38,7 +47,7 @@ export default function InterruptsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium">{intr.value}</p>
-                    <p className="mt-1 text-xs text-gray-500">
+                    <p className="mt-1 text-xs text-neutral-500">
                       Thread: {intr.thread_id?.slice(0, 8)} | {new Date(intr.created_at).toLocaleString()}
                     </p>
                   </div>
@@ -50,7 +59,7 @@ export default function InterruptsPage() {
                     value={resolveValues[intr.id] || ""}
                     onChange={(e) => setResolveValues((prev) => ({ ...prev, [intr.id]: e.target.value }))}
                     placeholder="Resume value..."
-                    className="flex-1 rounded border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm text-gray-100 placeholder-gray-500 focus:border-amber-600 focus:outline-none"
+                    className="flex-1 rounded border border-white/[0.1] bg-neutral-950 px-3 py-1.5 text-sm text-white placeholder-neutral-600 focus:border-amber-500/50 focus:outline-none"
                   />
                   <button
                     onClick={() => handleResolve(intr.id)}
@@ -68,22 +77,22 @@ export default function InterruptsPage() {
       {/* Resolved */}
       {resolved.length > 0 && (
         <div>
-          <h2 className="mb-3 text-lg font-semibold text-gray-400">
+          <h2 className="mb-3 text-lg font-semibold text-neutral-400">
             Resolved ({resolved.length})
           </h2>
           <div className="space-y-2">
             {resolved.map((intr) => (
               <div
                 key={intr.id}
-                className="flex items-center justify-between rounded-lg border border-gray-800 bg-gray-900 px-4 py-3"
+                className="flex items-center justify-between rounded-lg border border-white/[0.06] bg-neutral-950 px-4 py-3"
               >
                 <div>
-                  <p className="text-sm text-gray-400">{intr.value}</p>
-                  <p className="text-xs text-gray-600">
+                  <p className="text-sm text-neutral-400">{intr.value}</p>
+                  <p className="text-xs text-neutral-600">
                     Resume: {intr.resume_value || "—"}
                   </p>
                 </div>
-                <div className="text-right text-xs text-gray-500">
+                <div className="text-right text-xs text-neutral-500">
                   <StatusBadge status={intr.status} />
                   <p className="mt-1">{intr.resolved_at ? new Date(intr.resolved_at).toLocaleString() : ""}</p>
                 </div>

@@ -12,8 +12,8 @@ export function useHealth() {
       const health = await cp.health();
       setData(health);
       setError(null);
-    } catch (e: any) {
-      setError(e.message);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Unknown error");
     }
   }, []);
 

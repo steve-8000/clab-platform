@@ -19,7 +19,7 @@ export default function CodeIntelLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="space-y-6">
-      <nav className="rounded-xl border border-gray-800 bg-gray-950 p-2">
+      <nav className="rounded-xl border border-white/[0.06] bg-black p-2">
         <div className="flex flex-wrap gap-2">
           {SUBNAV.map((item) => {
             const detailSegment = pathname.split("/")[2];
@@ -37,8 +37,8 @@ export default function CodeIntelLayout({ children }: { children: ReactNode }) {
                 href={item.href}
                 className={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                   active
-                    ? "bg-gray-800 text-white"
-                    : "text-gray-400 hover:bg-gray-900 hover:text-gray-200"
+                    ? "bg-white/[0.06] text-white"
+                    : "text-neutral-400 hover:bg-neutral-950 hover:text-neutral-200"
                 }`}
               >
                 {item.label}

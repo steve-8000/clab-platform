@@ -35,7 +35,7 @@ export default function HotspotsPage() {
     <div className="space-y-6">
       <div className="space-y-2">
         <h1 className="text-2xl font-bold">Hotspots</h1>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-neutral-400">
           Identify complexity hotspots and high-coupling areas
         </p>
       </div>
@@ -44,7 +44,7 @@ export default function HotspotsPage() {
         <select
           value={selectedRepo}
           onChange={(event) => setSelectedRepo(event.target.value)}
-          className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+          className="rounded-lg border border-white/[0.1] bg-neutral-950 px-3 py-2 text-sm text-white"
         >
           <option value="" disabled>
             Select repository
@@ -59,7 +59,7 @@ export default function HotspotsPage() {
         <select
           value={metric}
           onChange={(event) => setMetric(event.target.value as (typeof METRICS)[number])}
-          className="rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+          className="rounded-lg border border-white/[0.1] bg-neutral-950 px-3 py-2 text-sm text-white"
         >
           {METRICS.map((option) => (
             <option key={option} value={option}>
@@ -70,10 +70,10 @@ export default function HotspotsPage() {
       </div>
 
       {loading ? (
-        <div className="rounded-lg border border-gray-800 overflow-hidden">
+        <div className="rounded-lg border border-white/[0.06] overflow-hidden">
           <div className="space-y-0">
             {Array.from({ length: 6 }).map((_, index) => (
-              <div key={index} className="h-12 animate-pulse border-b border-gray-800 bg-gray-900 last:border-0" />
+              <div key={index} className="h-12 animate-pulse border-b border-white/[0.06] bg-neutral-950 last:border-0" />
             ))}
           </div>
         </div>
@@ -88,14 +88,14 @@ export default function HotspotsPage() {
           description="No hotspots detected for this repository"
         />
       ) : (
-        <div className="rounded-lg border border-gray-800 overflow-hidden">
-          <div className="grid grid-cols-[minmax(0,1.6fr)_100px_110px_100px_100px_120px] bg-gray-900 border-b border-gray-800">
-            <div className="px-4 py-3 text-xs font-medium uppercase tracking-wider text-gray-500">File Path</div>
-            <div className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">Symbols</div>
-            <div className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">Complexity</div>
-            <div className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">Fan-in</div>
-            <div className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">Fan-out</div>
-            <div className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Metric Value</div>
+        <div className="rounded-lg border border-white/[0.06] overflow-hidden">
+          <div className="grid grid-cols-[minmax(0,1.6fr)_100px_110px_100px_100px_120px] bg-neutral-950 border-b border-white/[0.06]">
+            <div className="px-4 py-3 text-xs font-medium uppercase tracking-wider text-neutral-500">File Path</div>
+            <div className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-neutral-500">Symbols</div>
+            <div className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-neutral-500">Complexity</div>
+            <div className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-neutral-500">Fan-in</div>
+            <div className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-neutral-500">Fan-out</div>
+            <div className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-neutral-500">Metric Value</div>
           </div>
 
           {hotspots.map((hotspot, index) => {
@@ -103,30 +103,30 @@ export default function HotspotsPage() {
             return (
               <div
                 key={`${hotspot.file_path || hotspot.file || "hotspot"}-${index}`}
-                className="grid grid-cols-[minmax(0,1.6fr)_100px_110px_100px_100px_120px] border-b border-gray-800 last:border-0"
+                className="grid grid-cols-[minmax(0,1.6fr)_100px_110px_100px_100px_120px] border-b border-white/[0.06] last:border-0"
               >
-                <div className="max-w-xs truncate px-4 py-2 font-mono text-sm text-gray-300">
+                <div className="max-w-xs truncate px-4 py-2 font-mono text-sm text-neutral-300">
                   {hotspot.file_path || hotspot.file || "—"}
                 </div>
-                <div className="px-4 py-2 text-center text-sm text-gray-400">
+                <div className="px-4 py-2 text-center text-sm text-neutral-400">
                   {hotspot.symbol_count ?? 0}
                 </div>
                 <div
                   className={`px-4 py-2 text-center text-sm ${
-                    (hotspot.complexity ?? 0) > 10 ? "text-red-400" : "text-gray-400"
+                    (hotspot.complexity ?? 0) > 10 ? "text-red-400" : "text-neutral-400"
                   }`}
                 >
                   {hotspot.complexity ?? "—"}
                 </div>
-                <div className="px-4 py-2 text-center text-sm text-gray-400">
+                <div className="px-4 py-2 text-center text-sm text-neutral-400">
                   {hotspot.fan_in ?? "—"}
                 </div>
-                <div className="px-4 py-2 text-center text-sm text-gray-400">
+                <div className="px-4 py-2 text-center text-sm text-neutral-400">
                   {hotspot.fan_out ?? "—"}
                 </div>
                 <div
                   className={`px-4 py-2 text-right text-sm font-medium ${
-                    index < 3 ? "text-red-400" : "text-gray-400"
+                    index < 3 ? "text-red-400" : "text-neutral-400"
                   }`}
                 >
                   {metricValue}

@@ -21,7 +21,7 @@ export default function StructuralFindingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Structural Findings</h1>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-neutral-500">
           Code review structural analysis results
         </p>
       </div>
@@ -32,7 +32,7 @@ export default function StructuralFindingsPage() {
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           placeholder="Enter review ID..."
-          className="flex-1 rounded-lg border border-gray-700 bg-gray-900 px-4 py-2 text-sm"
+          className="flex-1 rounded-lg border border-white/[0.1] bg-neutral-950 px-4 py-2 text-sm"
         />
         <button
           type="button"
@@ -46,7 +46,7 @@ export default function StructuralFindingsPage() {
       {loading ? (
         <div className="space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-24 animate-pulse rounded-lg bg-gray-800" />
+            <div key={i} className="h-24 animate-pulse rounded-lg bg-white/[0.06]" />
           ))}
         </div>
       ) : findings.length === 0 && reviewId ? (
@@ -64,12 +64,12 @@ export default function StructuralFindingsPage() {
           {findings.map((finding) => {
             const severityClass =
               SEVERITY_STYLES[finding.severity.toLowerCase()] ||
-              "bg-gray-700 text-gray-300";
+              "bg-white/[0.08] text-neutral-300";
 
             return (
               <div
                 key={finding.id}
-                className="space-y-2 rounded-lg border border-gray-800 bg-gray-900 p-4"
+                className="space-y-2 rounded-lg border border-white/[0.06] bg-neutral-950 p-4"
               >
                 <div className="flex items-center gap-2">
                   <span
@@ -78,10 +78,10 @@ export default function StructuralFindingsPage() {
                     {finding.severity}
                   </span>
                   <StatusBadge status={finding.finding_type} />
-                  <p className="font-medium text-gray-200">{finding.title}</p>
+                  <p className="font-medium text-neutral-200">{finding.title}</p>
                 </div>
 
-                <p className="text-sm text-gray-400">{finding.description}</p>
+                <p className="text-sm text-neutral-400">{finding.description}</p>
 
                 {finding.affected_symbols?.length > 0 && (
                   <div className="flex flex-wrap gap-1">
@@ -101,7 +101,7 @@ export default function StructuralFindingsPage() {
                     {finding.affected_files.map((file) => (
                       <span
                         key={file}
-                        className="rounded bg-gray-800 px-2 py-0.5 text-xs font-mono text-gray-400"
+                        className="rounded bg-white/[0.06] px-2 py-0.5 text-xs font-mono text-neutral-400"
                       >
                         {file}
                       </span>

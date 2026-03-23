@@ -1,4 +1,17 @@
 import { CODE_INTEL_URL, CONTROL_PLANE_URL, KNOWLEDGE_URL } from "./config";
+import type {
+  Artifact,
+  HealthData,
+  Interrupt,
+  Thread,
+  WorkerRuntime,
+  DispatchCommand,
+  GraphData,
+  InsightListResponse,
+  ProfileResponse,
+  SurfaceRuntime,
+  WorkspaceRuntime,
+} from "@/types";
 
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -11,30 +24,78 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
 
 // ---- Control Plane ----
 export const cp = {
-  health: () => fetchJSON<any>(`${CONTROL_PLANE_URL}/health`),
+  health: () => fetchJSON<HealthData>(`${CONTROL_PLANE_URL}/health`),
   threads: (status?: string) => {
     const qs = status ? `?status=${status}` : "";
-    return fetchJSON<any[]>(`${CONTROL_PLANE_URL}/threads${qs}`);
+    return fetchJSON<Thread[]>(`${CONTROL_PLANE_URL}/threads${qs}`);
   },
-  thread: (id: string) => fetchJSON<any>(`${CONTROL_PLANE_URL}/threads/${id}`),
+  thread: (id: string) => fetchJSON<Thread>(`${CONTROL_PLANE_URL}/threads/${id}`),
   runs: (threadId: string) =>
     fetchJSON<any>(`${CONTROL_PLANE_URL}/threads/${threadId}/runs`, { method: "POST", body: "{}" }),
   run: (id: string) => fetchJSON<any>(`${CONTROL_PLANE_URL}/runs/${id}`),
   interrupts: (threadId?: string) => {
     const qs = threadId ? `?thread_id=${threadId}` : "";
-    return fetchJSON<any[]>(`${CONTROL_PLANE_URL}/interrupts${qs}`);
+    return fetchJSON<Interrupt[]>(`${CONTROL_PLANE_URL}/interrupts${qs}`);
   },
   resolveInterrupt: (id: string, resumeValue: string) =>
     fetchJSON<any>(`${CONTROL_PLANE_URL}/interrupts/${id}/resolve`, {
       method: "POST",
       body: JSON.stringify({ resume_value: resumeValue }),
     }),
-  workers: () => fetchJSON<any[]>(`${CONTROL_PLANE_URL}/workers`),
+  workers: () => fetchJSON<WorkerRuntime[]>(`${CONTROL_PLANE_URL}/workers`),
+  workspaces: (workerId?: string) =>
+    fetchJSON<WorkspaceRuntime[]>(
+      `${CONTROL_PLANE_URL}/workspaces${workerId ? `?worker_id=${encodeURIComponent(workerId)}` : ""}`,
+    ),
+  workspace: (workspaceId: string) =>
+    fetchJSON<WorkspaceRuntime>(`${CONTROL_PLANE_URL}/workspaces/${workspaceId}`),
+  surfaces: (workspaceId: string) =>
+    fetchJSON<SurfaceRuntime[]>(`${CONTROL_PLANE_URL}/workspaces/${workspaceId}/surfaces`),
+  workerWorkspaces: (workerId: string) =>
+    fetchJSON<WorkspaceRuntime[]>(`${CONTROL_PLANE_URL}/workers/${workerId}/workspaces`),
+  dispatchMission: (body: {
+    worker_id: string;
+    goal: string;
+    workdir?: string;
+    parallel?: boolean;
+    workspace_id?: string;
+  }) =>
+    fetchJSON<DispatchCommand>(`${CONTROL_PLANE_URL}/dispatch/mission`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  dispatchPrompt: (body: {
+    worker_id: string;
+    surface_id: string;
+    prompt: string;
+    workspace_id?: string;
+  }) =>
+    fetchJSON<DispatchCommand>(`${CONTROL_PLANE_URL}/dispatch/prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  dispatchCancel: (body: { worker_id: string; workspace_id?: string; run_id?: string }) =>
+    fetchJSON<DispatchCommand>(`${CONTROL_PLANE_URL}/dispatch/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  dispatches: (workerId?: string, status?: string) => {
+    const params = new URLSearchParams();
+    if (workerId) params.set("worker_id", workerId);
+    if (status) params.set("status", status);
+    const qs = params.toString();
+    return fetchJSON<DispatchCommand[]>(`${CONTROL_PLANE_URL}/dispatches${qs ? `?${qs}` : ""}`);
+  },
   artifacts: (threadId?: string) => {
     const qs = threadId ? `?thread_id=${threadId}` : "";
-    return fetchJSON<any[]>(`${CONTROL_PLANE_URL}/artifacts${qs}`);
+    return fetchJSON<Artifact[]>(`${CONTROL_PLANE_URL}/artifacts${qs}`);
   },
   eventsUrl: (threadId: string) => `${CONTROL_PLANE_URL}/threads/${threadId}/events`,
+  runtimeEventsUrl: (workerId?: string) =>
+    `${CONTROL_PLANE_URL}/events/runtime${workerId ? `?worker_id=${encodeURIComponent(workerId)}` : ""}`,
 };
 
 // ---- Knowledge Service ----
@@ -44,6 +105,12 @@ export const ks = {
     fetchJSON<any>(`${KNOWLEDGE_URL}/v1/knowledge/search?q=${encodeURIComponent(q)}&limit=${limit}`),
   status: () => fetchJSON<any>(`${KNOWLEDGE_URL}/v1/knowledge/status`),
   tags: () => fetchJSON<any>(`${KNOWLEDGE_URL}/v1/knowledge/tags`),
+  profile: () => fetchJSON<ProfileResponse>(`${KNOWLEDGE_URL}/v1/profile`),
+  graph: () => fetchJSON<GraphData>(`${KNOWLEDGE_URL}/v1/graph`),
+  insightsList: (type?: string) =>
+    fetchJSON<InsightListResponse>(
+      `${KNOWLEDGE_URL}/v1/insights/list${type ? `?type=${encodeURIComponent(type)}` : ""}`,
+    ),
 };
 
 // ---- Code Intelligence ----

@@ -77,12 +77,12 @@ export default function GraphExplorerPage() {
     <div className="space-y-6">
       <div className="space-y-2">
         <h1 className="text-2xl font-bold">Graph Explorer</h1>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-neutral-500">
           Explore packages, files, and symbols progressively without rendering the full graph.
         </p>
       </div>
 
-      <section className="rounded-xl border border-gray-800 bg-gray-950 p-4">
+      <section className="rounded-xl border border-white/[0.06] bg-black p-4">
         <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)_180px_180px_140px_auto]">
           <select
             value={selectedRepo}
@@ -92,7 +92,7 @@ export default function GraphExplorerPage() {
               setFileFilter(null);
               explorer.clearSelection();
             }}
-            className="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+            className="rounded-lg border border-white/[0.06] bg-neutral-950 px-3 py-2 text-sm text-white"
             disabled={repositoriesLoading}
           >
             <option value="">Select repository</option>
@@ -112,13 +112,13 @@ export default function GraphExplorerPage() {
               explorer.clearSelection();
             }}
             placeholder="Search symbol name or qualified name"
-            className="rounded-lg border border-gray-800 bg-gray-900 px-4 py-2 text-sm text-gray-100"
+            className="rounded-lg border border-white/[0.06] bg-neutral-950 px-4 py-2 text-sm text-white"
           />
 
           <select
             value={symbolType}
             onChange={(event) => setSymbolType(event.target.value as (typeof KIND_OPTIONS)[number])}
-            className="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+            className="rounded-lg border border-white/[0.06] bg-neutral-950 px-3 py-2 text-sm text-white"
           >
             {KIND_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -132,7 +132,7 @@ export default function GraphExplorerPage() {
             onChange={(event) =>
               setRelationType(event.target.value as (typeof RELATION_OPTIONS)[number])
             }
-            className="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+            className="rounded-lg border border-white/[0.06] bg-neutral-950 px-3 py-2 text-sm text-white"
           >
             {RELATION_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -144,7 +144,7 @@ export default function GraphExplorerPage() {
           <select
             value={depth}
             onChange={(event) => setDepth(Number(event.target.value) as (typeof DEPTH_OPTIONS)[number])}
-            className="rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-100"
+            className="rounded-lg border border-white/[0.06] bg-neutral-950 px-3 py-2 text-sm text-white"
           >
             {DEPTH_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -153,7 +153,7 @@ export default function GraphExplorerPage() {
             ))}
           </select>
 
-          <label className="flex items-center gap-2 rounded-lg border border-gray-800 bg-gray-900 px-3 py-2 text-sm text-gray-200">
+          <label className="flex items-center gap-2 rounded-lg border border-white/[0.06] bg-neutral-950 px-3 py-2 text-sm text-neutral-200">
             <input
               type="checkbox"
               checked={changedOnly}
@@ -172,15 +172,15 @@ export default function GraphExplorerPage() {
       ) : (
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="grid gap-4 lg:grid-cols-3">
-            <section className="rounded-xl border border-gray-800 bg-gray-900">
-              <div className="border-b border-gray-800 px-4 py-3">
-                <p className="text-sm font-medium text-gray-200">1. Packages</p>
-                <p className="text-xs text-gray-500">Top-level drill-down</p>
+            <section className="rounded-xl border border-white/[0.06] bg-neutral-950">
+              <div className="border-b border-white/[0.06] px-4 py-3">
+                <p className="text-sm font-medium text-neutral-200">1. Packages</p>
+                <p className="text-xs text-neutral-500">Top-level drill-down</p>
               </div>
               <div className="max-h-[520px] space-y-2 overflow-auto p-3">
                 {explorer.searchLoading ? (
                   Array.from({ length: 6 }).map((_, index) => (
-                    <div key={index} className="h-16 animate-pulse rounded-lg bg-gray-800" />
+                    <div key={index} className="h-16 animate-pulse rounded-lg bg-white/[0.06]" />
                   ))
                 ) : explorer.packages.length === 0 ? (
                   <EmptyState
@@ -201,14 +201,14 @@ export default function GraphExplorerPage() {
                         className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
                           active
                             ? "border-blue-700 bg-blue-950 text-blue-100"
-                            : "border-gray-800 bg-gray-950 text-gray-200 hover:border-gray-700"
+                            : "border-white/[0.06] bg-black text-neutral-200 hover:border-white/[0.1]"
                         }`}
                       >
                         <div className="flex items-center justify-between gap-3">
                           <p className="truncate font-mono text-sm">{pkg.name}</p>
-                          <span className="text-xs text-gray-400">{pkg.files.size} files</span>
+                          <span className="text-xs text-neutral-400">{pkg.files.size} files</span>
                         </div>
-                        <p className="mt-2 text-xs text-gray-500">
+                        <p className="mt-2 text-xs text-neutral-500">
                           {pkg.symbolCount} symbols
                           {changedOnly ? `, ${pkg.changedCount} changed` : ""}
                         </p>
@@ -219,10 +219,10 @@ export default function GraphExplorerPage() {
               </div>
             </section>
 
-            <section className="rounded-xl border border-gray-800 bg-gray-900">
-              <div className="border-b border-gray-800 px-4 py-3">
-                <p className="text-sm font-medium text-gray-200">2. Files</p>
-                <p className="text-xs text-gray-500">Scoped to the selected package</p>
+            <section className="rounded-xl border border-white/[0.06] bg-neutral-950">
+              <div className="border-b border-white/[0.06] px-4 py-3">
+                <p className="text-sm font-medium text-neutral-200">2. Files</p>
+                <p className="text-xs text-neutral-500">Scoped to the selected package</p>
               </div>
               <div className="max-h-[520px] space-y-2 overflow-auto p-3">
                 {visibleFiles.length === 0 ? (
@@ -245,11 +245,11 @@ export default function GraphExplorerPage() {
                         className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
                           active
                             ? "border-emerald-700 bg-emerald-950 text-emerald-100"
-                            : "border-gray-800 bg-gray-950 text-gray-200 hover:border-gray-700"
+                            : "border-white/[0.06] bg-black text-neutral-200 hover:border-white/[0.1]"
                         }`}
                       >
                         <p className="truncate font-mono text-sm">{file.path}</p>
-                        <p className="mt-2 text-xs text-gray-500">
+                        <p className="mt-2 text-xs text-neutral-500">
                           {file.symbolCount} symbols
                           {changedOnly ? `, ${file.changedCount} changed` : ""}
                         </p>
@@ -260,10 +260,10 @@ export default function GraphExplorerPage() {
               </div>
             </section>
 
-            <section className="rounded-xl border border-gray-800 bg-gray-900">
-              <div className="border-b border-gray-800 px-4 py-3">
-                <p className="text-sm font-medium text-gray-200">3. Symbols</p>
-                <p className="text-xs text-gray-500">Select a symbol to inspect related nodes</p>
+            <section className="rounded-xl border border-white/[0.06] bg-neutral-950">
+              <div className="border-b border-white/[0.06] px-4 py-3">
+                <p className="text-sm font-medium text-neutral-200">3. Symbols</p>
+                <p className="text-xs text-neutral-500">Select a symbol to inspect related nodes</p>
               </div>
               <div className="max-h-[520px] space-y-2 overflow-auto p-3">
                 {visibleSymbols.length === 0 ? (
@@ -282,14 +282,14 @@ export default function GraphExplorerPage() {
                         className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
                           active
                             ? "border-amber-700 bg-amber-950 text-amber-100"
-                            : "border-gray-800 bg-gray-950 text-gray-200 hover:border-gray-700"
+                            : "border-white/[0.06] bg-black text-neutral-200 hover:border-white/[0.1]"
                         }`}
                       >
                         <div className="flex items-center justify-between gap-3">
                           <p className="truncate font-medium">{symbol.name}</p>
                           <StatusBadge status={symbol.kind} />
                         </div>
-                        <p className="mt-2 truncate font-mono text-xs text-gray-500">
+                        <p className="mt-2 truncate font-mono text-xs text-neutral-500">
                           {symbol.file_path}:{symbol.line_number}
                         </p>
                         {symbol.changed && (
@@ -305,10 +305,10 @@ export default function GraphExplorerPage() {
             </section>
           </div>
 
-          <aside className="rounded-xl border border-gray-800 bg-gray-950">
-            <div className="border-b border-gray-800 px-4 py-3">
-              <p className="text-sm font-medium text-gray-200">Inspector</p>
-              <p className="text-xs text-gray-500">Symbol details and filtered relations</p>
+          <aside className="rounded-xl border border-white/[0.06] bg-black">
+            <div className="border-b border-white/[0.06] px-4 py-3">
+              <p className="text-sm font-medium text-neutral-200">Inspector</p>
+              <p className="text-xs text-neutral-500">Symbol details and filtered relations</p>
             </div>
 
             <div className="space-y-4 p-4">
@@ -319,23 +319,23 @@ export default function GraphExplorerPage() {
                 />
               ) : explorer.inspectorLoading ? (
                 <div className="space-y-3">
-                  <div className="h-20 animate-pulse rounded-lg bg-gray-800" />
-                  <div className="h-40 animate-pulse rounded-lg bg-gray-800" />
+                  <div className="h-20 animate-pulse rounded-lg bg-white/[0.06]" />
+                  <div className="h-40 animate-pulse rounded-lg bg-white/[0.06]" />
                 </div>
               ) : (
                 <>
-                  <div className="space-y-2 rounded-lg border border-gray-800 bg-gray-900 p-4">
+                  <div className="space-y-2 rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
                     <div className="flex items-center justify-between gap-3">
-                      <p className="font-medium text-gray-100">{explorer.selectedSymbol.name}</p>
+                      <p className="font-medium text-white">{explorer.selectedSymbol.name}</p>
                       <StatusBadge status={explorer.selectedSymbol.kind} />
                     </div>
-                    <p className="font-mono text-xs text-gray-500">
+                    <p className="font-mono text-xs text-neutral-500">
                       {explorer.selectedSymbol.fq_name || explorer.selectedSymbol.name}
                     </p>
-                    <p className="font-mono text-xs text-gray-500">
+                    <p className="font-mono text-xs text-neutral-500">
                       {explorer.selectedSymbol.file_path}:{explorer.selectedSymbol.line_number}
                     </p>
-                    <p className="text-sm text-gray-400">
+                    <p className="text-sm text-neutral-400">
                       Risk score: {explorer.inspector?.risk_score ?? 0}
                     </p>
                   </div>
@@ -350,17 +350,17 @@ export default function GraphExplorerPage() {
                       explorer.related.map((group) => (
                         <section
                           key={group.relation}
-                          className="rounded-lg border border-gray-800 bg-gray-900 p-4"
+                          className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4"
                         >
                           <div className="flex items-center justify-between gap-3">
-                            <p className="text-sm font-medium text-gray-100">{group.relation}</p>
-                            <span className="text-xs text-gray-500">depth {group.depth}</span>
+                            <p className="text-sm font-medium text-white">{group.relation}</p>
+                            <span className="text-xs text-neutral-500">depth {group.depth}</span>
                           </div>
                           <div className="mt-3 space-y-2">
                             {group.items.map((item, index) => (
                               <div
                                 key={`${group.relation}-${item}-${index}`}
-                                className="rounded-md border border-gray-800 bg-gray-950 px-3 py-2 font-mono text-xs text-gray-300"
+                                className="rounded-md border border-white/[0.06] bg-black px-3 py-2 font-mono text-xs text-neutral-300"
                               >
                                 {item}
                               </div>
@@ -372,22 +372,22 @@ export default function GraphExplorerPage() {
                   </div>
 
                   {explorer.contextBundle && (
-                    <section className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-                      <p className="text-sm font-medium text-gray-100">Context Bundle</p>
-                      <p className="mt-2 text-sm text-gray-400">
+                    <section className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
+                      <p className="text-sm font-medium text-white">Context Bundle</p>
+                      <p className="mt-2 text-sm text-neutral-400">
                         {explorer.contextBundle.summary || "No summary available."}
                       </p>
-                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-500">
-                        <div className="rounded-md border border-gray-800 bg-gray-950 px-3 py-2">
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-neutral-500">
+                        <div className="rounded-md border border-white/[0.06] bg-black px-3 py-2">
                           Targets: {explorer.contextBundle.primary_targets.length}
                         </div>
-                        <div className="rounded-md border border-gray-800 bg-gray-950 px-3 py-2">
+                        <div className="rounded-md border border-white/[0.06] bg-black px-3 py-2">
                           Files: {explorer.contextBundle.related_files.length}
                         </div>
-                        <div className="rounded-md border border-gray-800 bg-gray-950 px-3 py-2">
+                        <div className="rounded-md border border-white/[0.06] bg-black px-3 py-2">
                           Tests: {explorer.contextBundle.related_tests.length}
                         </div>
-                        <div className="rounded-md border border-gray-800 bg-gray-950 px-3 py-2">
+                        <div className="rounded-md border border-white/[0.06] bg-black px-3 py-2">
                           Warnings: {explorer.contextBundle.warnings.length}
                         </div>
                       </div>

@@ -21,34 +21,34 @@ export function LiveEvents({ threadId }: { threadId: string | null }) {
 
   if (!threadId) {
     return (
-      <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-        <h3 className="mb-3 text-sm font-medium text-gray-400">Live Events</h3>
-        <p className="text-xs text-gray-600">Select a thread to stream events</p>
+      <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
+        <h3 className="mb-3 text-sm font-medium text-neutral-400">Live Events</h3>
+        <p className="text-xs text-neutral-600">Select a thread to stream events</p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+    <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-gray-400">Live Events</h3>
+        <h3 className="text-sm font-medium text-neutral-400">Live Events</h3>
         <div className="flex items-center gap-2">
           <span className={`h-2 w-2 rounded-full ${connected ? "bg-green-500" : "bg-red-500"}`} />
-          <span className="text-xs text-gray-500">{connected ? "connected" : "disconnected"}</span>
+          <span className="text-xs text-neutral-500">{connected ? "connected" : "disconnected"}</span>
           {events.length > 0 && (
-            <button onClick={clear} className="text-xs text-gray-500 hover:text-gray-300">clear</button>
+            <button onClick={clear} className="text-xs text-neutral-500 hover:text-neutral-300">clear</button>
           )}
         </div>
       </div>
       <div className="max-h-80 space-y-1 overflow-y-auto font-mono text-xs">
         {events.length === 0 ? (
-          <p className="text-gray-600">Waiting for events...</p>
+          <p className="text-neutral-600">Waiting for events...</p>
         ) : (
           events.map((evt, i) => (
             <div key={i} className="flex gap-2">
-              <span className="text-gray-600 shrink-0">{evt.seq}</span>
-              <span className={EVENT_COLORS[evt.type] || "text-gray-400"}>{evt.type}</span>
-              <span className="text-gray-600 truncate">{JSON.stringify(evt.payload)}</span>
+              <span className="text-neutral-600 shrink-0">{evt.seq}</span>
+              <span className={EVENT_COLORS[evt.type] || "text-neutral-400"}>{evt.type}</span>
+              <span className="text-neutral-600 truncate">{JSON.stringify(evt.payload)}</span>
             </div>
           ))
         )}

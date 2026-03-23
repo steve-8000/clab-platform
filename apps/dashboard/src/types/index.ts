@@ -59,6 +59,63 @@ export interface Artifact {
   created_at: string;
 }
 
+// Runtime types
+export interface WorkerRuntime {
+  worker_id: string;
+  hostname: string;
+  platform: string;
+  capabilities: string[];
+  workdir: string;
+  status: "online" | "offline" | "degraded";
+  connected_at: string;
+  last_heartbeat: string;
+  version: string;
+}
+
+export interface WorkspaceRuntime {
+  id: string;
+  worker_id: string;
+  workspace_id: string;
+  name: string;
+  role: "orchestrator" | "agent" | "browser" | "adhoc";
+  status: "idle" | "busy" | "degraded" | "offline";
+  current_thread_id?: string;
+  current_run_id?: string;
+  created_at: string;
+  updated_at: string;
+  last_sync_at?: string;
+  surfaces?: SurfaceRuntime[];
+}
+
+export interface SurfaceRuntime {
+  id: string;
+  worker_id: string;
+  workspace_id: string;
+  surface_id: string;
+  name: string;
+  role: "planner" | "reviewer" | "worker" | "browser" | "shell";
+  engine: "codex" | "claude" | "browser" | "shell";
+  status: "idle" | "running" | "reviewing" | "fixing" | "waiting_input" | "error";
+  last_output_excerpt?: string;
+  last_activity_at?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface DispatchCommand {
+  id: string;
+  worker_id: string;
+  workspace_id?: string;
+  surface_id?: string;
+  thread_id?: string;
+  run_id?: string;
+  command_type: "mission" | "prompt" | "cancel";
+  payload: Record<string, unknown>;
+  status: "queued" | "sent" | "acked" | "running" | "completed" | "failed" | "cancelled";
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // Knowledge
 export interface KnowledgeEntry {
   id: string;
@@ -67,6 +124,61 @@ export interface KnowledgeEntry {
   tags: string[];
   source: string;
   created_at: string;
+  is_static?: boolean;
+  version?: number;
+  is_latest?: boolean;
+  is_forgotten?: boolean;
+  forget_after?: string;
+  relations?: Record<string, string[]>;
+}
+
+export interface ProfileResponse {
+  static: KnowledgeEntry[];
+  dynamic: KnowledgeEntry[];
+  stats: {
+    total_memories: number;
+    static_count: number;
+    dynamic_count: number;
+    forgotten_count: number;
+  };
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  total: number;
+}
+
+export interface GraphNode {
+  id: string;
+  topic: string;
+  source: string;
+  is_static: boolean;
+  created_at: string;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  relation: string;
+}
+
+export interface InsightListResponse {
+  insights: KnowledgeEntry[];
+  total: number;
+}
+
+export interface DebtCheckResponse {
+  passed: boolean;
+  debts: { type: string; path: string; description: string }[];
+  summary: {
+    total: number;
+    missing_crosslinks: number;
+    missing_hub: number;
+    orphan_docs: number;
+    broken_links: number;
+    stale_docs: number;
+  };
 }
 
 // Health

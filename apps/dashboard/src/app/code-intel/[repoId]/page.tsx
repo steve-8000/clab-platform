@@ -62,25 +62,25 @@ export default function RepositoryDetailPage() {
         {summaryLoading ? (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
             {Array.from({ length: 4 }).map((_, index) => (
-              <div key={index} className="h-20 animate-pulse rounded-lg bg-gray-800" />
+              <div key={index} className="h-20 animate-pulse rounded-lg bg-white/[0.06]" />
             ))}
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-              <p className="text-sm text-gray-400">Files</p>
+            <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
+              <p className="text-sm text-neutral-400">Files</p>
               <p className="mt-2 text-2xl font-bold">{summary?.total_files ?? 0}</p>
             </div>
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-              <p className="text-sm text-gray-400">Symbols</p>
+            <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
+              <p className="text-sm text-neutral-400">Symbols</p>
               <p className="mt-2 text-2xl font-bold">{summary?.total_symbols ?? 0}</p>
             </div>
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-              <p className="text-sm text-gray-400">Relations</p>
+            <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
+              <p className="text-sm text-neutral-400">Relations</p>
               <p className="mt-2 text-2xl font-bold">{summary?.total_relations ?? 0}</p>
             </div>
-            <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-              <p className="text-sm text-gray-400">Languages</p>
+            <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
+              <p className="text-sm text-neutral-400">Languages</p>
               <p className="mt-2 text-2xl font-bold">
                 {summary ? Object.keys(summary.languages || {}).length : 0}
               </p>
@@ -92,7 +92,7 @@ export default function RepositoryDetailPage() {
       {sortedLanguages.length > 0 && (
         <section className="space-y-6">
           <h2 className="text-2xl font-bold">Languages Distribution</h2>
-          <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
+          <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
             <div className="space-y-4">
               {sortedLanguages.map(([language, count]) => {
                 const percentage = totalLanguageCount > 0 ? (count / totalLanguageCount) * 100 : 0;
@@ -100,9 +100,9 @@ export default function RepositoryDetailPage() {
                   <div key={language} className="space-y-1">
                     <div className="flex items-center justify-between">
                       <span>{language}</span>
-                      <span className="text-sm text-gray-400">{count}</span>
+                      <span className="text-sm text-neutral-400">{count}</span>
                     </div>
-                    <div className="h-2 rounded bg-gray-800">
+                    <div className="h-2 rounded bg-white/[0.06]">
                       <div
                         className="h-2 rounded bg-blue-600"
                         style={{ width: `${percentage}%` }}
@@ -123,12 +123,12 @@ export default function RepositoryDetailPage() {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search symbols..."
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-2"
+            className="w-full rounded-lg border border-white/[0.1] bg-neutral-950 px-4 py-2"
           />
           <select
             value={symbolType}
             onChange={(event) => setSymbolType(event.target.value as (typeof KIND_OPTIONS)[number])}
-            className="w-full rounded-lg border border-gray-700 bg-gray-900 px-4 py-2"
+            className="w-full rounded-lg border border-white/[0.1] bg-neutral-950 px-4 py-2"
           >
             {KIND_OPTIONS.map((option) => (
               <option key={option} value={option}>
@@ -138,8 +138,8 @@ export default function RepositoryDetailPage() {
           </select>
         </div>
 
-        <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <div className="grid grid-cols-[minmax(0,1.2fr)_140px_minmax(0,1fr)_120px] gap-4 border-b border-gray-800 pb-2 text-sm text-gray-400">
+        <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
+          <div className="grid grid-cols-[minmax(0,1.2fr)_140px_minmax(0,1fr)_120px] gap-4 border-b border-white/[0.06] pb-2 text-sm text-neutral-400">
             <span>name</span>
             <span>kind</span>
             <span>file_path</span>
@@ -149,7 +149,7 @@ export default function RepositoryDetailPage() {
           {symbolsLoading ? (
             <div className="space-y-2 pt-3">
               {Array.from({ length: 4 }).map((_, index) => (
-                <div key={index} className="h-10 animate-pulse rounded-lg bg-gray-800" />
+                <div key={index} className="h-10 animate-pulse rounded-lg bg-white/[0.06]" />
               ))}
             </div>
           ) : symbols.length === 0 ? (
@@ -161,12 +161,12 @@ export default function RepositoryDetailPage() {
               {symbols.map((symbol) => (
                 <div
                   key={`${symbol.id}-${symbol.file_path}-${symbol.line_number}`}
-                  className="grid grid-cols-[minmax(0,1.2fr)_140px_minmax(0,1fr)_120px] items-center gap-4 border-b border-gray-800 py-2 last:border-0"
+                  className="grid grid-cols-[minmax(0,1.2fr)_140px_minmax(0,1fr)_120px] items-center gap-4 border-b border-white/[0.06] py-2 last:border-0"
                 >
                   <span className="truncate">{symbol.name}</span>
                   <StatusBadge status={symbol.kind} />
-                  <span className="truncate font-mono text-sm text-gray-400">{symbol.file_path}</span>
-                  <span className="font-mono text-sm text-gray-400">
+                  <span className="truncate font-mono text-sm text-neutral-400">{symbol.file_path}</span>
+                  <span className="font-mono text-sm text-neutral-400">
                     {getLineRange(symbol.line_number, symbol.metadata)}
                   </span>
                 </div>
@@ -183,13 +183,13 @@ export default function RepositoryDetailPage() {
         ) : (
           <div className="space-y-3">
             {snapshots.map((snapshot) => (
-              <div key={snapshot.id} className="rounded-lg border border-gray-800 bg-gray-900 p-3">
+              <div key={snapshot.id} className="rounded-lg border border-white/[0.06] bg-neutral-950 p-3">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 space-y-2">
                     <p className="font-mono text-sm">
                       {(snapshot.commit_hash || snapshot.id).slice(0, 8)}
                     </p>
-                    <div className="flex flex-wrap gap-4 text-sm text-gray-400">
+                    <div className="flex flex-wrap gap-4 text-sm text-neutral-400">
                       <span>files {getSnapshotMetric(snapshot.metadata, "total_files")}</span>
                       <span>symbols {getSnapshotMetric(snapshot.metadata, "total_symbols")}</span>
                       <span>relations {getSnapshotMetric(snapshot.metadata, "total_relations")}</span>
@@ -197,7 +197,7 @@ export default function RepositoryDetailPage() {
                   </div>
                   <div className="space-y-2 text-right">
                     <StatusBadge status={getSnapshotStatus(snapshot.metadata)} />
-                    <p className="text-sm text-gray-400">
+                    <p className="text-sm text-neutral-400">
                       {snapshot.snapshot_at ? new Date(snapshot.snapshot_at).toLocaleString() : "—"}
                     </p>
                   </div>
@@ -210,8 +210,8 @@ export default function RepositoryDetailPage() {
 
       <section className="space-y-6">
         <h2 className="text-2xl font-bold">Hotspots</h2>
-        <div className="rounded-lg border border-gray-800 bg-gray-900 p-4">
-          <div className="grid grid-cols-[minmax(0,1.4fr)_110px_110px_90px_90px_110px] gap-4 border-b border-gray-800 pb-2 text-sm text-gray-400">
+        <div className="rounded-lg border border-white/[0.06] bg-neutral-950 p-4">
+          <div className="grid grid-cols-[minmax(0,1.4fr)_110px_110px_90px_90px_110px] gap-4 border-b border-white/[0.06] pb-2 text-sm text-neutral-400">
             <span>file_path</span>
             <span>symbol_count</span>
             <span>complexity</span>
@@ -229,9 +229,9 @@ export default function RepositoryDetailPage() {
               {hotspots.map((hotspot, index) => (
                 <div
                   key={`${hotspot.file_path || hotspot.file || "hotspot"}-${index}`}
-                  className="grid grid-cols-[minmax(0,1.4fr)_110px_110px_90px_90px_110px] items-center gap-4 border-b border-gray-800 py-2 last:border-0"
+                  className="grid grid-cols-[minmax(0,1.4fr)_110px_110px_90px_90px_110px] items-center gap-4 border-b border-white/[0.06] py-2 last:border-0"
                 >
-                  <span className="truncate font-mono text-sm text-gray-400">
+                  <span className="truncate font-mono text-sm text-neutral-400">
                     {hotspot.file_path || hotspot.file || "—"}
                   </span>
                   <span>{hotspot.symbol_count ?? 0}</span>
