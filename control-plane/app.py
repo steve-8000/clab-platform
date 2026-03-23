@@ -756,32 +756,49 @@ async def worker_ws(ws: WebSocket):
 async def _thread_events_handler(request):
     thread_id = request.path_params["thread_id"]
     since_seq = int(request.query_params.get("since_seq", "0"))
-
-    backlog = store.list_events(thread_id, since_seq=since_seq, limit=500)
+    import time as _time
 
     async def stream():
-        q = asyncio.Queue()
-        sse_queues.setdefault(thread_id, []).append(q)
-        try:
-            for raw in backlog:
+        # Send backlog first
+        backlog = store.list_events(thread_id, since_seq=since_seq, limit=500)
+        max_seq = since_seq
+        for raw in backlog:
+            event = _as_jsonable(raw) or {}
+            seq = event.get("seq", 0) or 0
+            if seq > max_seq:
+                max_seq = seq
+            yield {"data": json.dumps({
+                "event_id": event.get("id"),
+                "thread_id": event.get("thread_id"),
+                "run_id": event.get("run_id"),
+                "type": event.get("type"),
+                "seq": seq,
+                "ts": event.get("ts"),
+                "payload": event.get("payload", {}),
+            })}
+
+        # Poll for new events
+        last_keepalive = _time.monotonic()
+        while True:
+            await asyncio.sleep(2)
+            new_events = store.list_events(thread_id, since_seq=max_seq, limit=50)
+            for raw in new_events:
                 event = _as_jsonable(raw) or {}
-                yield {"data": json.dumps({
-                    "event_id": event.get("id"),
-                    "thread_id": event.get("thread_id"),
-                    "run_id": event.get("run_id"),
-                    "type": event.get("type"),
-                    "seq": event.get("seq"),
-                    "ts": event.get("ts"),
-                    "payload": event.get("payload", {}),
-                })}
-            while True:
-                event = await q.get()
-                yield {"data": json.dumps(event)}
-        except asyncio.CancelledError:
-            pass
-        finally:
-            if thread_id in sse_queues and q in sse_queues[thread_id]:
-                sse_queues[thread_id].remove(q)
+                seq = event.get("seq", 0) or 0
+                if seq > max_seq:
+                    max_seq = seq
+                    yield {"data": json.dumps({
+                        "event_id": event.get("id"),
+                        "thread_id": event.get("thread_id"),
+                        "run_id": event.get("run_id"),
+                        "type": event.get("type"),
+                        "seq": seq,
+                        "ts": event.get("ts"),
+                        "payload": event.get("payload", {}),
+                    })}
+            if _time.monotonic() - last_keepalive > 15:
+                yield {"comment": "keepalive"}
+                last_keepalive = _time.monotonic()
 
     return EventSourceResponse(stream())
 
