@@ -43,14 +43,25 @@ logger = structlog.get_logger(__name__)
 
 
 def _detect_language(file_path: str) -> str:
-    """Detect language from file extension."""
-    ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
+    """Detect language from file extension. Handles broken paths from CGC Rich table."""
+    # Clean path: remove spaces from line-wrap artifacts
+    clean = file_path.replace(" ", "").strip()
+    # Extract extension
+    if "." not in clean:
+        return "unknown"
+    ext = clean.rsplit(".", 1)[-1].lower()
+    # Remove any trailing junk (line numbers etc)
+    ext = ext.split(":")[0].split("/")[0].strip()
+    if len(ext) > 10:
+        return "unknown"
     return {
         "py": "python", "go": "go", "ts": "typescript", "tsx": "typescript",
         "js": "javascript", "jsx": "javascript", "rs": "rust", "java": "java",
         "rb": "ruby", "php": "php", "c": "c", "cpp": "cpp", "h": "c",
         "cs": "csharp", "swift": "swift", "kt": "kotlin", "md": "markdown",
-    }.get(ext, ext or "unknown")
+        "toml": "toml", "yaml": "yaml", "yml": "yaml", "json": "json",
+        "css": "css", "html": "html", "sql": "sql", "sh": "shell",
+    }.get(ext, ext if ext.isalpha() and len(ext) <= 5 else "unknown")
 
 
 def _repo_local_path(repo_url: str, repo_id: str) -> str:
@@ -388,7 +399,9 @@ async def _run_indexing(
             logger.info("Collected symbols for indexing", total=len(symbols))
             for sym in symbols:
                 sym_id = str(uuid.uuid4())
-                lang = sym.language or _detect_language(sym.file_path)
+                # Clean file_path (CGC Rich table may insert line-break spaces)
+                clean_path = sym.file_path.replace(" ", "").strip() if sym.file_path else ""
+                lang = sym.language or _detect_language(clean_path)
                 fq = sym.name if not sym.file_path else f"{sym.file_path}::{sym.name}"
                 await db.execute(
                     """INSERT INTO ci_symbol_nodes (id, snapshot_id, fq_name, name, kind, file_path, line_number, language, metadata)
@@ -396,7 +409,7 @@ async def _run_indexing(
                     ON CONFLICT DO NOTHING""",
                     sym_id, snapshot_id, fq, sym.name,
                     sym.kind if sym.kind in ("function","class","module","variable") else "function",
-                    sym.file_path, sym.line_number, lang,
+                    clean_path, sym.line_number, lang,
                 )
                 node_count += 1
             logger.info("Persisted symbols", count=node_count, snapshot_id=snapshot_id)
