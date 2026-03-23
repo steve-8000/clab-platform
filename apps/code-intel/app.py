@@ -428,7 +428,31 @@ async def get_repo_summary(repo_id: str):
     if not repo:
         raise HTTPException(404, "Repository not found")
 
-    # Try CGC engine first for live data
+    # DB first — use indexed data
+    latest = await db.fetchrow(
+        """SELECT s.id FROM ci_repo_snapshots s
+        JOIN ci_graph_builds g ON g.snapshot_id = s.id AND g.status = 'COMPLETED'
+        WHERE s.repository_id = $1
+        ORDER BY s.snapshot_at DESC LIMIT 1""",
+        repo_id,
+    )
+    if latest:
+        sid = latest["id"]
+        sym_count = await db.fetchval("SELECT COUNT(*) FROM ci_symbol_nodes WHERE snapshot_id = $1", sid) or 0
+        rel_count = await db.fetchval("SELECT COUNT(*) FROM ci_relation_edges WHERE snapshot_id = $1", sid) or 0
+        file_count = await db.fetchval("SELECT COUNT(DISTINCT file_path) FROM ci_symbol_nodes WHERE snapshot_id = $1", sid) or 0
+        lang_rows = await db.fetch("SELECT language, COUNT(*) as cnt FROM ci_symbol_nodes WHERE snapshot_id = $1 AND language != '' GROUP BY language", sid)
+        languages = {r["language"]: r["cnt"] for r in lang_rows}
+        if sym_count > 0:
+            return {
+                "total_files": file_count,
+                "total_symbols": sym_count,
+                "total_relations": rel_count,
+                "languages": languages,
+                "top_complexity": [],
+            }
+
+    # Fallback: CGC live data
     engine = _get_cgc_engine()
     if engine:
         try:
@@ -441,7 +465,7 @@ async def get_repo_summary(repo_id: str):
                 "top_complexity": [],
             }
         except Exception as exc:
-            logger.warning("CGC summary failed, falling back to DB", error=str(exc))
+            logger.warning("CGC summary failed", error=str(exc))
 
     # Fallback: compute from latest snapshot in DB
     latest = await db.fetchrow(
