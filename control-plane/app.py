@@ -818,7 +818,10 @@ async def _runtime_events_handler(request):
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-app.add_api_route("/events/runtime", _runtime_events_handler, methods=["GET"], response_model=None)
+from starlette.applications import Starlette as _StarletteApp
+from starlette.routing import Route as _Route
+_sse_app = _StarletteApp(routes=[_Route("/runtime", _runtime_events_handler)])
+app.mount("/events", _sse_app)
 
 
 # ---- Artifacts / Audit ----
