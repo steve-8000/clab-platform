@@ -159,6 +159,72 @@ class RuntimeStore:
         CREATE INDEX IF NOT EXISTS idx_checkpoints_thread_created ON checkpoints(thread_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_interrupts_thread_created ON interrupts(thread_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_artifacts_thread_created ON artifacts(thread_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS workers (
+          worker_id TEXT PRIMARY KEY,
+          hostname TEXT NOT NULL DEFAULT '',
+          platform TEXT NOT NULL DEFAULT '',
+          capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+          workdir TEXT NOT NULL DEFAULT '.',
+          status TEXT NOT NULL DEFAULT 'offline',
+          connected_at TIMESTAMPTZ,
+          last_heartbeat TIMESTAMPTZ,
+          version TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS cmux_workspaces (
+          id TEXT PRIMARY KEY,
+          worker_id TEXT NOT NULL REFERENCES workers(worker_id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL,
+          name TEXT NOT NULL DEFAULT '',
+          role TEXT NOT NULL DEFAULT 'agent',
+          status TEXT NOT NULL DEFAULT 'idle',
+          current_thread_id TEXT,
+          current_run_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          last_sync_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmux_ws_worker ON cmux_workspaces(worker_id);
+
+        CREATE TABLE IF NOT EXISTS cmux_surfaces (
+          id TEXT PRIMARY KEY,
+          worker_id TEXT NOT NULL,
+          workspace_id TEXT NOT NULL REFERENCES cmux_workspaces(id) ON DELETE CASCADE,
+          surface_id TEXT NOT NULL,
+          name TEXT NOT NULL DEFAULT '',
+          role TEXT NOT NULL DEFAULT 'worker',
+          engine TEXT NOT NULL DEFAULT 'codex',
+          status TEXT NOT NULL DEFAULT 'idle',
+          last_output_excerpt TEXT DEFAULT '',
+          last_activity_at TIMESTAMPTZ,
+          metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+        );
+        CREATE INDEX IF NOT EXISTS idx_cmux_sf_ws ON cmux_surfaces(workspace_id);
+
+        CREATE TABLE IF NOT EXISTS dispatch_commands (
+          id TEXT PRIMARY KEY,
+          worker_id TEXT NOT NULL,
+          workspace_id TEXT,
+          surface_id TEXT,
+          thread_id TEXT,
+          run_id TEXT,
+          command_type TEXT NOT NULL,
+          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          status TEXT NOT NULL DEFAULT 'queued',
+          created_by TEXT NOT NULL DEFAULT 'dashboard',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS idx_dispatch_worker ON dispatch_commands(worker_id, status);
+
+        CREATE TABLE IF NOT EXISTS dispatch_results (
+          id TEXT PRIMARY KEY,
+          command_id TEXT NOT NULL REFERENCES dispatch_commands(id) ON DELETE CASCADE,
+          status TEXT NOT NULL,
+          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
         """
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -481,6 +547,303 @@ class RuntimeStore:
             cur.execute(sql, params)
             return cur.fetchall() or []
 
+    # Workers
+    async def upsert_worker(
+        self,
+        worker_id: str,
+        hostname: str = "",
+        platform: str = "",
+        capabilities: list | None = None,
+        workdir: str = ".",
+        status: str = "online",
+        version: str = "",
+    ) -> dict:
+        now = _utc_now()
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO workers
+                (worker_id, hostname, platform, capabilities, workdir, status, connected_at, last_heartbeat, version)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (worker_id) DO UPDATE SET
+                  hostname=EXCLUDED.hostname,
+                  platform=EXCLUDED.platform,
+                  capabilities=EXCLUDED.capabilities,
+                  workdir=EXCLUDED.workdir,
+                  status=EXCLUDED.status,
+                  last_heartbeat=EXCLUDED.last_heartbeat,
+                  version=EXCLUDED.version,
+                  connected_at=COALESCE(workers.connected_at, EXCLUDED.connected_at)
+                RETURNING *;
+                """,
+                (worker_id, hostname, platform, Jsonb(capabilities or []), workdir, status, now, now, version),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return row or {}
+
+    async def get_worker(self, worker_id: str) -> dict | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM workers WHERE worker_id=%s;", (worker_id,))
+            return cur.fetchone()
+
+    async def list_workers(self, status: str | None = None) -> list[dict]:
+        with self._connect() as conn, conn.cursor() as cur:
+            if status:
+                cur.execute("SELECT * FROM workers WHERE status=%s ORDER BY worker_id ASC;", (status,))
+            else:
+                cur.execute("SELECT * FROM workers ORDER BY worker_id ASC;")
+            return cur.fetchall() or []
+
+    async def update_worker_status(self, worker_id: str, status: str) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("UPDATE workers SET status=%s WHERE worker_id=%s;", (status, worker_id))
+            conn.commit()
+
+    async def update_worker_heartbeat(self, worker_id: str) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE workers SET last_heartbeat=%s WHERE worker_id=%s;",
+                (_utc_now(), worker_id),
+            )
+            conn.commit()
+
+    # Workspaces
+    async def upsert_workspace(
+        self,
+        id: str,
+        worker_id: str,
+        workspace_id: str,
+        name: str = "",
+        role: str = "agent",
+        status: str = "idle",
+        **kwargs,
+    ) -> dict:
+        now = _utc_now()
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO cmux_workspaces
+                (id, worker_id, workspace_id, name, role, status, current_thread_id, current_run_id, created_at, updated_at, last_sync_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                  worker_id=EXCLUDED.worker_id,
+                  workspace_id=EXCLUDED.workspace_id,
+                  name=EXCLUDED.name,
+                  role=EXCLUDED.role,
+                  status=EXCLUDED.status,
+                  current_thread_id=EXCLUDED.current_thread_id,
+                  current_run_id=EXCLUDED.current_run_id,
+                  updated_at=EXCLUDED.updated_at,
+                  last_sync_at=EXCLUDED.last_sync_at
+                RETURNING *;
+                """,
+                (
+                    id,
+                    worker_id,
+                    workspace_id,
+                    name,
+                    role,
+                    status,
+                    kwargs.get("current_thread_id"),
+                    kwargs.get("current_run_id"),
+                    kwargs.get("created_at") or now,
+                    kwargs.get("updated_at") or now,
+                    kwargs.get("last_sync_at") or now,
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return row or {}
+
+    async def list_workspaces(self, worker_id: str | None = None) -> list[dict]:
+        with self._connect() as conn, conn.cursor() as cur:
+            if worker_id:
+                cur.execute(
+                    "SELECT * FROM cmux_workspaces WHERE worker_id=%s ORDER BY updated_at DESC, id ASC;",
+                    (worker_id,),
+                )
+            else:
+                cur.execute("SELECT * FROM cmux_workspaces ORDER BY updated_at DESC, id ASC;")
+            return cur.fetchall() or []
+
+    async def get_workspace(self, workspace_id: str) -> dict | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM cmux_workspaces WHERE id=%s OR workspace_id=%s ORDER BY updated_at DESC LIMIT 1;",
+                (workspace_id, workspace_id),
+            )
+            return cur.fetchone()
+
+    async def delete_workspaces_for_worker(self, worker_id: str) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM cmux_workspaces WHERE worker_id=%s;", (worker_id,))
+            conn.commit()
+
+    # Surfaces
+    async def upsert_surface(
+        self,
+        id: str,
+        worker_id: str,
+        workspace_id: str,
+        surface_id: str,
+        name: str = "",
+        role: str = "worker",
+        engine: str = "codex",
+        status: str = "idle",
+        last_output_excerpt: str = "",
+        **kwargs,
+    ) -> dict:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO cmux_surfaces
+                (id, worker_id, workspace_id, surface_id, name, role, engine, status, last_output_excerpt, last_activity_at, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                  worker_id=EXCLUDED.worker_id,
+                  workspace_id=EXCLUDED.workspace_id,
+                  surface_id=EXCLUDED.surface_id,
+                  name=EXCLUDED.name,
+                  role=EXCLUDED.role,
+                  engine=EXCLUDED.engine,
+                  status=EXCLUDED.status,
+                  last_output_excerpt=EXCLUDED.last_output_excerpt,
+                  last_activity_at=EXCLUDED.last_activity_at,
+                  metadata=EXCLUDED.metadata
+                RETURNING *;
+                """,
+                (
+                    id,
+                    worker_id,
+                    workspace_id,
+                    surface_id,
+                    name,
+                    role,
+                    engine,
+                    status,
+                    last_output_excerpt,
+                    kwargs.get("last_activity_at") or _utc_now(),
+                    Jsonb(kwargs.get("metadata") or {}),
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return row or {}
+
+    async def list_surfaces(self, workspace_id: str) -> list[dict]:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM cmux_surfaces
+                WHERE workspace_id=%s
+                   OR workspace_id IN (
+                     SELECT id FROM cmux_workspaces WHERE workspace_id=%s
+                   )
+                ORDER BY last_activity_at DESC NULLS LAST, id ASC;
+                """,
+                (workspace_id, workspace_id),
+            )
+            return cur.fetchall() or []
+
+    async def delete_surfaces_for_workspace(self, workspace_id: str) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM cmux_surfaces WHERE workspace_id=%s;", (workspace_id,))
+            conn.commit()
+
+    # Dispatch
+    async def create_dispatch(
+        self,
+        worker_id: str,
+        command_type: str,
+        payload: dict,
+        workspace_id: str | None = None,
+        surface_id: str | None = None,
+        thread_id: str | None = None,
+        created_by: str = "dashboard",
+    ) -> dict:
+        command_id = str(uuid4())
+        now = _utc_now()
+        run_id = payload.get("run_id") if isinstance(payload, dict) else None
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO dispatch_commands
+                (id, worker_id, workspace_id, surface_id, thread_id, run_id, command_type, payload, status, created_by, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *;
+                """,
+                (
+                    command_id,
+                    worker_id,
+                    workspace_id,
+                    surface_id,
+                    thread_id,
+                    run_id,
+                    command_type,
+                    Jsonb(payload or {}),
+                    "queued",
+                    created_by,
+                    now,
+                    now,
+                ),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return row or {}
+
+    async def get_dispatch(self, command_id: str) -> dict | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM dispatch_commands WHERE id=%s;", (command_id,))
+            return cur.fetchone()
+
+    async def update_dispatch_status(self, command_id: str, status: str) -> dict | None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE dispatch_commands
+                SET status=%s, updated_at=%s
+                WHERE id=%s
+                RETURNING *;
+                """,
+                (status, _utc_now(), command_id),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return row
+
+    async def list_dispatches(self, worker_id: str | None = None, status: str | None = None) -> list[dict]:
+        where = []
+        params: list[Any] = []
+        if worker_id:
+            where.append("worker_id=%s")
+            params.append(worker_id)
+        if status:
+            where.append("status=%s")
+            params.append(status)
+        sql = "SELECT * FROM dispatch_commands"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY created_at DESC;"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            return cur.fetchall() or []
+
+    async def create_dispatch_result(self, command_id: str, status: str, payload: dict | None = None) -> dict:
+        result_id = str(uuid4())
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO dispatch_results (id, command_id, status, payload, created_at)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING *;
+                """,
+                (result_id, command_id, status, Jsonb(payload or {}), _utc_now()),
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return row or {}
+
     def stats(self) -> dict[str, int]:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS c FROM threads;")
@@ -491,9 +854,21 @@ class RuntimeStore:
             checkpoints = int((cur.fetchone() or {}).get("c", 0))
             cur.execute("SELECT COUNT(*) AS c FROM interrupts WHERE status='pending';")
             pending_interrupts = int((cur.fetchone() or {}).get("c", 0))
+            cur.execute("SELECT COUNT(*) AS c FROM workers;")
+            workers = int((cur.fetchone() or {}).get("c", 0))
+            cur.execute("SELECT COUNT(*) AS c FROM cmux_workspaces;")
+            workspaces = int((cur.fetchone() or {}).get("c", 0))
+            cur.execute("SELECT COUNT(*) AS c FROM cmux_surfaces;")
+            surfaces = int((cur.fetchone() or {}).get("c", 0))
+            cur.execute("SELECT COUNT(*) AS c FROM dispatch_commands WHERE status IN ('queued', 'sent', 'acked');")
+            pending_dispatches = int((cur.fetchone() or {}).get("c", 0))
             return {
                 "threads": threads,
                 "runs": runs,
                 "checkpoints": checkpoints,
                 "pending_interrupts": pending_interrupts,
+                "workers": workers,
+                "workspaces": workspaces,
+                "surfaces": surfaces,
+                "pending_dispatches": pending_dispatches,
             }
