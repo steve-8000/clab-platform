@@ -793,29 +793,19 @@ def session_events(session_id: str, since_seq: int = 0) -> StreamingResponse:
     return thread_events(session_id, since_seq=since_seq)
 
 
-@app.get("/events/runtime")
-def runtime_events(worker_id: str | None = None) -> StreamingResponse:
+@app.get("/events/runtime", response_model=None)
+async def runtime_events(worker_id: str | None = None):
     import time as _time
 
     async def stream():
         last_keepalive = _time.monotonic()
         while True:
             await asyncio.sleep(2)
-            # Check for pending events from SSE queues
-            scope = worker_id or "__all__"
-            events_to_send = []
-            for q_list in [runtime_sse_queues.get(scope, []), runtime_sse_queues.get("__all__", [])]:
-                for q in q_list:
-                    while not q.empty():
-                        try:
-                            events_to_send.append(q.get_nowait())
-                        except asyncio.QueueEmpty:
-                            break
-            for event in events_to_send:
-                yield f"data: {json.dumps(event)}\n\n"
             # Keepalive every 15s
             if _time.monotonic() - last_keepalive > 15:
-                yield ": keepalive\n\n"
+                yield ": keepalive
+
+"
                 last_keepalive = _time.monotonic()
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
