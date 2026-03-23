@@ -803,9 +803,7 @@ async def runtime_events(worker_id: str | None = None):
             await asyncio.sleep(2)
             # Keepalive every 15s
             if _time.monotonic() - last_keepalive > 15:
-                yield ": keepalive
-
-"
+                yield ": keepalive\n\n"\n\n"
                 last_keepalive = _time.monotonic()
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
