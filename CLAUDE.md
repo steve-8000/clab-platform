@@ -18,7 +18,7 @@ Orchestrator Workspace (user-facing):
   └─ Surface: Browser (optional, for verification)
   ※ No codex/claude agent surfaces here
 
-Agent Workspace "agent-planner" (planner creates at plan stage):
+Agent Workspace "{orchestrator}:agent" (e.g. "K8s-STG:agent"):
   ├─ codex-0 (main) ── planner + reviewer (dual role)
   ├─ codex-1 (right) ── worker
   ├─ codex-2 (down-left) ── worker
