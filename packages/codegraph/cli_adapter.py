@@ -203,19 +203,24 @@ class CgcCliEngineAdapter(CodeIntelEngine):
         summary = RepoSummary(repo_path=repo_path)
         for line in output.splitlines():
             cleaned = self._clean_rich(line).strip()
-            lower = cleaned.lower()
-            # Match lines like "Files  | 42" or "Files    42"
-            match = re.search(r"(\d+)\s*$", cleaned)
-            if match:
-                val = int(match.group(1))
-                if "file" in lower:
-                    summary.file_count = val
-                elif "function" in lower:
-                    summary.function_count = val
-                elif "class" in lower:
-                    summary.class_count = val
-                elif "module" in lower:
-                    summary.module_count = val
+            if not cleaned:
+                continue
+            # Split by | and look for label + number pairs
+            parts = [p.strip() for p in cleaned.split("|") if p.strip()]
+            if len(parts) >= 2:
+                label = parts[0].lower()
+                # Try to extract number from second part
+                num_match = re.search(r"(\d+)", parts[1])
+                if num_match:
+                    val = int(num_match.group(1))
+                    if "file" in label:
+                        summary.file_count = val
+                    elif "function" in label:
+                        summary.function_count = val
+                    elif "class" in label:
+                        summary.class_count = val
+                    elif "module" in label:
+                        summary.module_count = val
 
         return summary
 
@@ -342,9 +347,9 @@ class CgcCliEngineAdapter(CodeIntelEngine):
     async def get_complexity_signals(
         self, repo_path: str | None = None, limit: int = 20
     ) -> list[ComplexitySignal]:
-        args = ["analyze", "complexity"]
+        args = ["analyze", "complexity"]  # PATH arg is function name, not repo path
         if repo_path:
-            args.append(repo_path)
+            pass  # repo_path is set via CGC config, not as CLI arg
         args.extend(["--limit", str(limit)])
 
         output = await self._run_cgc(args, timeout=self.timeout_query)
@@ -363,13 +368,20 @@ class CgcCliEngineAdapter(CodeIntelEngine):
                 for item in data
             ]
 
-        # Parse Rich table
+        # Parse Rich table (using _merge_rich_rows to handle multi-line cells)
         results: list[ComplexitySignal] = []
-        for line in output.splitlines():
-            cleaned = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+        for cleaned in self._merge_rich_rows(output):
+            if (
+                not cleaned
+                or cleaned.startswith("─")
+                or cleaned.startswith("-")
+            ):
+                continue
             parts = [p.strip() for p in cleaned.split("|") if p.strip()]
-            if len(parts) >= 3:
+            if len(parts) >= 2:
                 name_val = parts[0]
+                if name_val.lower() in ("function", "name", "metric"):
+                    continue
                 try:
                     score = float(re.sub(r"[^\d.]", "", parts[1]))
                 except (ValueError, IndexError):
@@ -390,7 +402,7 @@ class CgcCliEngineAdapter(CodeIntelEngine):
     ) -> list[DeadCodeCandidate]:
         args = ["analyze", "dead-code"]
         if repo_path:
-            args.append(repo_path)
+            pass  # repo_path is set via CGC config, not as CLI arg
 
         output = await self._run_cgc(args, timeout=self.timeout_query)
         if not output:
@@ -461,11 +473,24 @@ def _parse_relation_output(raw: str, json_parser: Any) -> list[dict]:
         return data
 
     results: list[dict] = []
-    for line in raw.splitlines():
-        cleaned = re.sub(r"\x1b\[[0-9;]*m", "", line).strip()
+    for cleaned in CgcCliEngineAdapter._merge_rich_rows(raw):
+        if (
+            not cleaned
+            or cleaned.startswith("─")
+            or cleaned.startswith("┌")
+            or cleaned.startswith("├")
+            or cleaned.startswith("└")
+            or cleaned.startswith("-")
+            or cleaned.startswith("+")
+            or cleaned.startswith("╭")
+            or cleaned.startswith("╰")
+        ):
+            continue
         parts = [p.strip() for p in cleaned.split("|") if p.strip()]
         if len(parts) >= 2:
             name_val = parts[0]
+            if name_val.lower() in ("name", "caller", "callee", "function", "caller function", "called function", "metric", "count"):
+                continue
             location = parts[1] if len(parts) > 1 else ""
             file_p, line_n = _parse_location(location)
             results.append(
