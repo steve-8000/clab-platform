@@ -34,6 +34,7 @@ const NAV: NavItem[] = [
   },
   { href: "/interrupts", label: "Interrupts", icon: "06" },
   { href: "/code-intel", label: "Code Intel", icon: "07" },
+  { href: "/schedules", label: "Schedules", icon: "08" },
 ];
 
 export function Sidebar({ open, onClose }: SidebarProps) {

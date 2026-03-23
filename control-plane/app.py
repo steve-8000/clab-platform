@@ -870,3 +870,66 @@ def health():
         "service": "control-plane",
         **stats,
     }
+
+
+# ---- Scheduled Jobs ----
+
+class CreateScheduleRequest(BaseModel):
+    worker_id: str
+    name: str
+    cron_expression: str
+    command_type: str = "prompt"
+    payload: dict | None = None
+
+class UpdateScheduleRequest(BaseModel):
+    name: str | None = None
+    cron_expression: str | None = None
+    enabled: bool | None = None
+    payload: dict | None = None
+
+
+@app.get("/schedules")
+async def list_schedules(worker_id: str | None = None):
+    return [_as_jsonable(j) for j in await store.list_scheduled_jobs(worker_id)]
+
+
+@app.post("/schedules")
+async def create_schedule(req: CreateScheduleRequest):
+    job = await store.create_scheduled_job(
+        req.worker_id, req.name, req.cron_expression, req.command_type, req.payload or {}
+    )
+    return _as_jsonable(job)
+
+
+@app.put("/schedules/{job_id}")
+async def update_schedule(job_id: str, req: UpdateScheduleRequest):
+    updates: dict[str, Any] = {}
+    if req.name is not None:
+        updates["name"] = req.name
+    if req.cron_expression is not None:
+        updates["cron_expression"] = req.cron_expression
+    if req.enabled is not None:
+        updates["enabled"] = req.enabled
+    if req.payload is not None:
+        updates["payload"] = req.payload
+    job = await store.update_scheduled_job(job_id, updates)
+    if not job:
+        raise HTTPException(404, "Schedule not found")
+    return _as_jsonable(job)
+
+
+@app.delete("/schedules/{job_id}")
+async def delete_schedule(job_id: str):
+    ok = await store.delete_scheduled_job(job_id)
+    if not ok:
+        raise HTTPException(404, "Schedule not found")
+    return {"deleted": True}
+
+
+@app.post("/workers/{worker_id}/heartbeat")
+async def trigger_heartbeat(worker_id: str):
+    sent = await registry.send_command(worker_id, {"type": "heartbeat.ping"})
+    if sent:
+        registry.heartbeat(worker_id)
+        await store.update_worker_heartbeat(worker_id)
+    return {"worker_id": worker_id, "sent": sent}

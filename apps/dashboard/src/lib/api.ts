@@ -96,6 +96,16 @@ export const cp = {
   eventsUrl: (threadId: string) => `${CONTROL_PLANE_URL}/threads/${threadId}/events`,
   runtimeEventsUrl: (workerId?: string) =>
     `${CONTROL_PLANE_URL}/events/runtime${workerId ? `?worker_id=${encodeURIComponent(workerId)}` : ""}`,
+  schedules: (workerId?: string) =>
+    fetchJSON<any[]>(`${CONTROL_PLANE_URL}/schedules${workerId ? `?worker_id=${workerId}` : ""}`),
+  createSchedule: (body: any) =>
+    fetchJSON<any>(`${CONTROL_PLANE_URL}/schedules`, { method: "POST", body: JSON.stringify(body) }),
+  updateSchedule: (id: string, body: any) =>
+    fetchJSON<any>(`${CONTROL_PLANE_URL}/schedules/${id}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteSchedule: (id: string) =>
+    fetchJSON<any>(`${CONTROL_PLANE_URL}/schedules/${id}`, { method: "DELETE" }),
+  triggerHeartbeat: (workerId: string) =>
+    fetchJSON<any>(`${CONTROL_PLANE_URL}/workers/${workerId}/heartbeat`, { method: "POST" }),
 };
 
 // ---- Knowledge Service ----
