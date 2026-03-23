@@ -1,0 +1,7 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": [
+    "/Users/steve/clab-platform/.venv/lib/python3.14/site-packages"
+  ]
+}

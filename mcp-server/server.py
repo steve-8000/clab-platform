@@ -186,10 +186,15 @@ async def _knowledge_post_k(args: dict):
             "modifiedDocs": args["modifiedDocs"], "basePath": args.get("basePath", "."),
         })
         data = resp.json()
-    post_k = data.get("postK", {})
-    if post_k.get("pass", True):
+    post_k = data.get("postK")
+    if isinstance(post_k, dict):
+        passed = post_k.get("pass", data.get("passed", True))
+        debts = post_k.get("debts", data.get("debts", []))
+    else:
+        passed = data.get("passed", True)
+        debts = data.get("debts", [])
+    if passed:
         return [TextContent(type="text", text="Knowledge integrity check PASSED.")]
-    debts = post_k.get("debts", [])
     text = "\n".join(f"- [{d['type']}] {d['path']}: {d['description']}" for d in debts)
     return [TextContent(type="text", text=f"FAILED — {len(debts)} issue(s):\n{text}")]
 
