@@ -55,7 +55,7 @@ export default function SchedulesPage() {
 
   const runNow = async (job: ScheduledJob) => {
     const prompt = (job.payload as any)?.prompt || job.name;
-    await cp.dispatchPrompt({ worker_id: job.worker_id, prompt });
+    await cp.dispatchPrompt({ worker_id: job.worker_id, surface_id: "", prompt });
     refresh();
   };
 
