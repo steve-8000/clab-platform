@@ -752,8 +752,8 @@ async def worker_ws(ws: WebSocket):
 
 
 # ---- Events / SSE ----
-@app.get("/threads/{thread_id}/events", response_class=StreamingResponse)
-async def thread_events(thread_id: str, since_seq: int = 0):
+@app.get("/threads/{thread_id}/events")
+async def thread_events(thread_id: str, since_seq: int = 0) -> StreamingResponse:
     queue: asyncio.Queue = asyncio.Queue()
     if thread_id not in sse_queues:
         sse_queues[thread_id] = []
@@ -787,14 +787,14 @@ async def thread_events(thread_id: str, since_seq: int = 0):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@app.get("/events/{session_id}", response_class=StreamingResponse)
-async def session_events(session_id: str, since_seq: int = 0):
+@app.get("/events/{session_id}")
+async def session_events(session_id: str, since_seq: int = 0) -> StreamingResponse:
     # Legacy alias
     return thread_events(session_id, since_seq=since_seq)
 
 
-@app.get("/events/runtime", response_class=StreamingResponse)
-async def runtime_events(worker_id: str | None = None):
+@app.get("/events/runtime")
+async def runtime_events(worker_id: str | None = None) -> StreamingResponse:
     scope = worker_id or "__all__"
     q: asyncio.Queue = asyncio.Queue()
     runtime_sse_queues.setdefault(scope, []).append(q)
