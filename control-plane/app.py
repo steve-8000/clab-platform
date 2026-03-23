@@ -775,7 +775,7 @@ async def _thread_events_handler(request):
                     "payload": event.get("payload", {}),
                 })}
             while True:
-                event = await queue.get()
+                event = await q.get()
                 yield {"data": json.dumps(event)}
         except asyncio.CancelledError:
             pass
