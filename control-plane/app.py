@@ -793,8 +793,6 @@ def session_events(session_id: str, since_seq: int = 0) -> StreamingResponse:
     return thread_events(session_id, since_seq=since_seq)
 
 
-from starlette.routing import Route
-
 async def _runtime_events_handler(request):
     import time as _time
     worker_id = request.query_params.get("worker_id")
@@ -820,7 +818,7 @@ async def _runtime_events_handler(request):
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-app.routes.append(Route("/events/runtime", _runtime_events_handler))
+app.add_api_route("/events/runtime", _runtime_events_handler, methods=["GET"], response_model=None)
 
 
 # ---- Artifacts / Audit ----
