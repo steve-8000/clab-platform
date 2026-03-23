@@ -389,19 +389,21 @@ class WorkerPool:
         self._workdir = workdir
 
         surfaces = await self.cmux.surface_list(self.workspace_id)
-        main_surface_id = surfaces[0].get("surface_id", surfaces[0].get("id")) if surfaces else None
+        main_surface_id = (
+            surfaces[0].get("surface_id", surfaces[0].get("id")) if surfaces else None
+        )
         if not main_surface_id:
             raise RuntimeError("No main surface found for workspace")
 
-        # Reviewer gets the main surface (top-left, largest area)
+        # Reviewer gets planner's surface or main
         if self._reviewer_surface_id:
             reviewer_surface_id = self._reviewer_surface_id
             logger.info("Reviewer reusing planner codex surface: %s", reviewer_surface_id)
         else:
             reviewer_surface_id = main_surface_id
 
-        # Split anchor is always reviewer surface (planner's codex = main surface now)
         split_anchor = reviewer_surface_id
+
         try:
             await self.cmux.request(
                 "surface.rename",
@@ -410,20 +412,31 @@ class WorkerPool:
         except Exception:
             pass
 
-        # Split workers from reviewer surface (balanced 2-column grid)
-        # Step 1: reviewer → split right → w0
-        surface_0 = await self.cmux.surface_split("right", self.workspace_id, split_anchor)
-        w0_id = surface_0.get("surface_id", surface_0.get("id"))
+        # Reuse existing worker surfaces if workspace already has them
+        all_surface_ids = [s.get("surface_id", s.get("id")) for s in surfaces]
+        non_reviewer = [sid for sid in all_surface_ids if sid != reviewer_surface_id]
 
-        # Step 2: reviewer → split down → w1
-        surface_1 = await self.cmux.surface_split("down", self.workspace_id, split_anchor)
-        w1_id = surface_1.get("surface_id", surface_1.get("id"))
+        if len(non_reviewer) >= self.num_workers:
+            # Workspace already has enough surfaces — reuse them
+            worker_surface_ids = non_reviewer[: self.num_workers]
+            logger.info("Reusing %d existing worker surfaces", len(worker_surface_ids))
+        else:
+            # Need to create new worker surfaces via split
+            surface_0 = await self.cmux.surface_split(
+                "right", self.workspace_id, split_anchor
+            )
+            w0_id = surface_0.get("surface_id", surface_0.get("id"))
 
-        # Step 3: w0 → split down → w2
-        surface_2 = await self.cmux.surface_split("down", self.workspace_id, w0_id)
-        w2_id = surface_2.get("surface_id", surface_2.get("id"))
+            surface_1 = await self.cmux.surface_split(
+                "down", self.workspace_id, split_anchor
+            )
+            w1_id = surface_1.get("surface_id", surface_1.get("id"))
 
-        worker_surface_ids = [w0_id, w1_id, w2_id]
+            surface_2 = await self.cmux.surface_split("down", self.workspace_id, w0_id)
+            w2_id = surface_2.get("surface_id", surface_2.get("id"))
+
+            worker_surface_ids = [w0_id, w1_id, w2_id]
+            logger.info("Created %d new worker surfaces", len(worker_surface_ids))
 
         # Create codex worker surfaces
         for i, surface_id in enumerate(worker_surface_ids[:self.num_workers]):
