@@ -23,7 +23,10 @@ RUN pip install --no-cache-dir "tree-sitter-language-pack==0.13.0"
 # Copy application code
 COPY apps/code-intel /app/code_intel
 
-RUN mkdir -p /app/repos
+RUN mkdir -p /app/repos /root/.codegraphcontext
+
+# Configure CGC to use FalkorDB server
+RUN echo "DATABASE=falkordb\nFALKORDB_HOST=falkordb\nFALKORDB_PORT=6379" > /root/.codegraphcontext/.env
 
 ENV PYTHONPATH=/app:/app/packages
 
