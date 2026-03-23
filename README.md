@@ -4,7 +4,6 @@
 
 Give it a goal. It plans, executes in parallel, reviews, and delivers — with full state tracking, knowledge integration, and human-in-the-loop support.
 
-> Live demo: [ai.clab.one](https://ai.clab.one)
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
