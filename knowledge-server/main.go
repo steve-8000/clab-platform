@@ -66,20 +66,16 @@ func main() {
 		r.Post("/inject/prompt", memoryHandler.InjectPrompt)
 		r.Post("/inject/tool", memoryHandler.InjectTool)
 		r.Post("/transcript/append", memoryHandler.AppendTranscript)
-	}
-
-	mountKBRoutes := func(r chi.Router) {
-		r.Use(memoryHandler.RequireAuth)
-		r.Post("/ingest", kbHandler.Ingest)
-		r.Get("/browse", kbHandler.Browse)
-		r.Get("/search", kbHandler.Search)
-		r.Get("/timeline", kbHandler.Timeline)
+		r.Route("/kb", func(r chi.Router) {
+			r.Post("/ingest", kbHandler.Ingest)
+			r.Get("/browse", kbHandler.Browse)
+			r.Get("/search", kbHandler.Search)
+			r.Get("/timeline", kbHandler.Timeline)
+		})
 	}
 
 	r.Route("/v1/memory", mountMemoryRoutes)
 	r.Route("/api/memory", mountMemoryRoutes)
-	r.Route("/v1/memory/kb", mountKBRoutes)
-	r.Route("/api/memory/kb", mountKBRoutes)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
