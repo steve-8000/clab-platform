@@ -264,6 +264,59 @@ func (c *Client) AppendUserMessage(ctx context.Context, conversationID, text str
 	return wrapped.Data, nil
 }
 
+// ArchivalEntry represents a Letta archival memory passage.
+type ArchivalEntry struct {
+	ID        string         `json:"id"`
+	Text      string         `json:"text"`
+	CreatedAt string         `json:"created_at,omitempty"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+}
+
+// InsertArchival inserts a passage into the agent's archival memory.
+func (c *Client) InsertArchival(ctx context.Context, agentID, text string, metadata map[string]any) (ArchivalEntry, error) {
+	reqBody := map[string]any{"text": text}
+	if len(metadata) > 0 {
+		reqBody["metadata"] = metadata
+	}
+	var entry ArchivalEntry
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/agents/"+agentID+"/archival/", reqBody, &entry); err != nil {
+		return ArchivalEntry{}, err
+	}
+	return entry, nil
+}
+
+// SearchArchival performs semantic search over the agent's archival memory.
+func (c *Client) SearchArchival(ctx context.Context, agentID, query string, limit int) ([]ArchivalEntry, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	q := url.Values{}
+	q.Set("query", query)
+	q.Set("limit", fmt.Sprintf("%d", limit))
+	var entries []ArchivalEntry
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/agents/"+agentID+"/archival/?"+q.Encode(), nil, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
+// ListArchival lists archival memory entries for an agent.
+func (c *Client) ListArchival(ctx context.Context, agentID string, limit, offset int) ([]ArchivalEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := url.Values{}
+	q.Set("limit", fmt.Sprintf("%d", limit))
+	if offset > 0 {
+		q.Set("after", fmt.Sprintf("%d", offset))
+	}
+	var entries []ArchivalEntry
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/agents/"+agentID+"/archival/?"+q.Encode(), nil, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
 	var payload io.Reader
 	if body != nil {

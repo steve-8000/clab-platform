@@ -14,6 +14,7 @@ import (
 type MemoryHandler struct {
 	client      *letta.Client
 	sessions    *memory.SessionStore
+	kbStore     *memory.KBStore
 	accessToken string
 }
 
@@ -24,6 +25,11 @@ func NewMemoryHandler(client *letta.Client, sessions *memory.SessionStore, acces
 		sessions:    sessions,
 		accessToken: strings.TrimSpace(accessToken),
 	}
+}
+
+// SetKBStore attaches the KB store for enriched inject responses.
+func (h *MemoryHandler) SetKBStore(store *memory.KBStore) {
+	h.kbStore = store
 }
 
 type memorySessionRequest struct {
@@ -258,6 +264,9 @@ func (h *MemoryHandler) inject(w http.ResponseWriter, r *http.Request, kind stri
 		}
 	}
 
+	// Enrich with KB data if available
+	decisions, patterns, errors_, insights := h.loadKBBlocks(r.Context())
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":              true,
 		"session_id":      sessionID,
@@ -269,11 +278,11 @@ func (h *MemoryHandler) inject(w http.ResponseWriter, r *http.Request, kind stri
 		"payload": memoryGatewayResponse{
 			Mode:         "whisper",
 			Message:      summary,
-			MemoryDiffs:  []string{},
-			ProjectFacts: []string{},
+			MemoryDiffs:  decisions,
+			ProjectFacts: patterns,
 			PendingItems: []string{},
-			Cautions:     []string{},
-			VerifiedRefs: []string{},
+			Cautions:     errors_,
+			VerifiedRefs: insights,
 		},
 	})
 }
@@ -304,6 +313,54 @@ func (h *MemoryHandler) ensureTarget(ctx context.Context, sessionID string) (str
 		return "", err
 	}
 	return block.ID, nil
+}
+
+// loadKBBlocks reads KB category blocks and returns recent items as string slices.
+func (h *MemoryHandler) loadKBBlocks(ctx context.Context) (decisions, patterns, errors_, insights []string) {
+	decisions = []string{}
+	patterns = []string{}
+	errors_ = []string{}
+	insights = []string{}
+
+	if h.kbStore == nil || h.client == nil {
+		return
+	}
+
+	readLines := func(category string, maxLines int) []string {
+		blockID, found, err := h.kbStore.Get(category)
+		if err != nil || !found || blockID == "" {
+			return nil
+		}
+		block, err := h.client.RetrieveBlock(ctx, blockID)
+		if err != nil || strings.TrimSpace(block.Value) == "" {
+			return nil
+		}
+		lines := strings.Split(strings.TrimSpace(block.Value), "\n")
+		// Take last N lines
+		if len(lines) > maxLines {
+			lines = lines[len(lines)-maxLines:]
+		}
+		return lines
+	}
+
+	decisions = readLines("decisions", 5)
+	patterns = readLines("patterns", 5)
+	errors_ = readLines("errors", 3)
+	insights = readLines("insights", 3)
+
+	if decisions == nil {
+		decisions = []string{}
+	}
+	if patterns == nil {
+		patterns = []string{}
+	}
+	if errors_ == nil {
+		errors_ = []string{}
+	}
+	if insights == nil {
+		insights = []string{}
+	}
+	return
 }
 
 func summarizeLettaMessages(messages []letta.Message) string {

@@ -52,6 +52,13 @@ func main() {
 	})
 	memoryHandler := handlers.NewMemoryHandler(memoryClient, memorySessions, os.Getenv("MEMORY_API_KEY"))
 
+	kbStore, err := memory.NewKBStore(filepath.Join(storeDir, "kb"))
+	if err != nil {
+		log.Fatalf("failed to initialize kb store: %v", err)
+	}
+	kbHandler := handlers.NewKBHandler(memoryClient, kbStore)
+	memoryHandler.SetKBStore(kbStore)
+
 	mountMemoryRoutes := func(r chi.Router) {
 		r.Use(memoryHandler.RequireAuth)
 		r.Get("/health", memoryHandler.Health)
@@ -61,8 +68,18 @@ func main() {
 		r.Post("/transcript/append", memoryHandler.AppendTranscript)
 	}
 
+	mountKBRoutes := func(r chi.Router) {
+		r.Use(memoryHandler.RequireAuth)
+		r.Post("/ingest", kbHandler.Ingest)
+		r.Get("/browse", kbHandler.Browse)
+		r.Get("/search", kbHandler.Search)
+		r.Get("/timeline", kbHandler.Timeline)
+	}
+
 	r.Route("/v1/memory", mountMemoryRoutes)
 	r.Route("/api/memory", mountMemoryRoutes)
+	r.Route("/v1/memory/kb", mountKBRoutes)
+	r.Route("/api/memory/kb", mountKBRoutes)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
