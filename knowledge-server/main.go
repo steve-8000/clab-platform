@@ -52,14 +52,17 @@ func main() {
 	})
 	memoryHandler := handlers.NewMemoryHandler(memoryClient, memorySessions, os.Getenv("MEMORY_API_KEY"))
 
-	r.Route("/v1/memory", func(r chi.Router) {
+	mountMemoryRoutes := func(r chi.Router) {
 		r.Use(memoryHandler.RequireAuth)
 		r.Get("/health", memoryHandler.Health)
 		r.Post("/session/start", memoryHandler.StartSession)
 		r.Post("/inject/prompt", memoryHandler.InjectPrompt)
 		r.Post("/inject/tool", memoryHandler.InjectTool)
 		r.Post("/transcript/append", memoryHandler.AppendTranscript)
-	})
+	}
+
+	r.Route("/v1/memory", mountMemoryRoutes)
+	r.Route("/api/memory", mountMemoryRoutes)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
